@@ -30,6 +30,8 @@ Your documents never leave your machine.
   PyTorch backend for max accuracy and rebuild the index in one click.
 - **Chat persistence** — sessions + history in SQLite, with a sidebar to revisit them.
 - **Vector store management** — view, selectively delete, or export the FAISS index.
+- **Guided onboarding** — a first-run wizard (detect hardware → pick a mode → add a key) plus an
+  always-available in-app Help & About panel.
 
 ---
 
