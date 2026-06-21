@@ -215,17 +215,64 @@ async def get_models():
 async def get_providers():
     """
     Provider summary for the settings UI: which are configured, which need a
-    key, plus live Ollama status. Never returns secrets.
+    key, whether a key is held in the encrypted in-app store, plus live Ollama
+    status. Never returns secrets.
     """
     from services.providers import detect_ollama
+    from services import keystore
 
     providers = config.list_providers()
+    stored = set(keystore.configured_providers())
     ollama = detect_ollama()
     for p in providers:
+        p["has_stored_key"] = p["name"] in stored
         if p["name"] == "ollama":
             p["configured"] = ollama["running"]
             p["model_count"] = len(ollama["models"])
-    return {"providers": providers, "ollama_running": ollama["running"]}
+    return {
+        "providers": providers,
+        "ollama_running": ollama["running"],
+        "key_storage_available": keystore.available(),
+    }
+
+
+class ProviderKey(BaseModel):
+    api_key: str
+
+
+@app.post("/api/providers/{name}/key")
+async def set_provider_key(name: str, body: ProviderKey):
+    """
+    Store an API key for a provider in the encrypted in-app key store.
+    The key is written encrypted-at-rest to the per-user data dir, never to the
+    repo or a plaintext file. An empty value clears the stored key.
+    """
+    from services import keystore
+
+    cfg = config.PROVIDERS.get(name)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Unknown provider '{name}'.")
+    if not cfg.get("api_key_env"):
+        raise HTTPException(status_code=400, detail=f"Provider '{name}' does not use an API key.")
+    if not keystore.available():
+        raise HTTPException(
+            status_code=503,
+            detail="Encrypted key storage is unavailable (cryptography not installed).",
+        )
+
+    keystore.set_key(name, body.api_key)
+    return {"name": name, "configured": config.provider_is_configured(name)}
+
+
+@app.delete("/api/providers/{name}/key")
+async def delete_provider_key(name: str):
+    """Remove any stored key for a provider from the encrypted in-app store."""
+    from services import keystore
+
+    if name not in config.PROVIDERS:
+        raise HTTPException(status_code=404, detail=f"Unknown provider '{name}'.")
+    keystore.delete_key(name)
+    return {"name": name, "configured": config.provider_is_configured(name)}
 
 
 @app.get("/api/settings")

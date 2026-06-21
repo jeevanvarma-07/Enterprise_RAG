@@ -93,8 +93,9 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-One-click (Windows): `START_PROJECT.bat`. API key lives in `backend/.env` as `GROQ_API_KEY`
-(see Security below — this is being moved into the app).
+One-click (Windows): `START_PROJECT.bat`. API keys are best set in-app (Settings → LLM
+Providers, encrypted at rest); `backend/.env` (`GROQ_API_KEY=…`) still works for dev. See
+Security below.
 
 ---
 
@@ -122,10 +123,15 @@ One-click (Windows): `START_PROJECT.bat`. API key lives in `backend/.env` as `GR
 
 ## 6. Security note (act on this)
 
-The Groq API key is currently committed in `backend/.env` and pasted in
-`TRANSFER_AND_SETUP_GUIDE.md`. **It is exposed and should be rotated** at console.groq.com,
-removed from all docs, and `.env` kept out of git (already in `.gitignore`). The long-term
-fix is in-app encrypted key storage (plan Phase 1). Do not reintroduce keys into the repo.
+**In-app encrypted key storage is now implemented** (`backend/services/keystore.py`,
+Settings → LLM Providers): keys are Fernet-encrypted under the per-user data dir, never in
+the repo. `config.provider_api_key()` prefers the encrypted store, then falls back to env.
+This is the preferred way to set keys; `backend/.env` still works for dev.
+
+Still a **user action**: the old Groq key that historically lived in `backend/.env` (and as
+a placeholder in `TRANSFER_AND_SETUP_GUIDE.md`) **should be rotated** at console.groq.com as a
+precaution. It was never committed (the repo only ever had `gsk_…` placeholders; `.env` is
+gitignored). Do not reintroduce real keys into the repo — use the in-app store.
 
 ---
 

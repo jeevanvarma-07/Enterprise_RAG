@@ -82,6 +82,7 @@ for pkg in [
     "rank_bm25",
     "flashrank",
     "huggingface_hub",
+    "cryptography",   # encrypted in-app API-key store (Fernet)
 ]:
     _bundle(pkg)
 
@@ -117,6 +118,7 @@ hiddenimports += [
     "services.embeddings",
     "services.reranker",
     "services.storage",
+    "services.keystore",
     "services.document_processing",
     "services.indexing",
     "services.generation",

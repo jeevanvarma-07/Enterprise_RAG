@@ -79,9 +79,14 @@ out of the repo, settings + SQLite in place, and a single axios client.
     when available.
   - **Ollama auto-detect** — if a local Ollama server is running, list & use its models.
   - *(Optional: evaluate `litellm` to collapse the cloud adapters into one dependency.)*
-- [ ] **In-app API-key management.** Settings UI to paste keys per provider; store
-      encrypted-at-rest in the app-data dir (e.g., OS keyring via `keyring`, or
-      Fernet-encrypted SQLite). Never in the repo. Show which providers are configured.
+- [x] **In-app API-key management.** ✅ Settings → LLM Providers lets you paste a key
+      per provider; it's **Fernet-encrypted at rest** (`services/keystore.py`) under the
+      per-user data dir (`secret.key` + `keys.enc`), never in the repo or a plaintext
+      `.env`. `config.provider_api_key()` resolves the encrypted store first, then the
+      env fallback, so `provider_is_configured` / the model picker light up automatically.
+      Endpoints: `POST`/`DELETE /api/providers/{name}/key`; `GET /api/providers` reports
+      `has_stored_key` + `key_storage_available` (never the secret). Degrades gracefully
+      if `cryptography` is absent. (Done 2026-06-22.)
 - [ ] **Model picker UI.** Replace the static dropdown with provider → model selection,
       populated dynamically (cloud model lists + detected local/Ollama models).
 - [ ] **Offline mode (no Ollama needed).** Bundle `llama-cpp-python`. On first "Enable

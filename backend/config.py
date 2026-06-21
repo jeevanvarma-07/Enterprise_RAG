@@ -297,11 +297,27 @@ def get_provider(name: str) -> dict[str, Any]:
 
 
 def provider_api_key(name: str) -> str:
-    """Return the configured API key for a provider, or '' if none/needed."""
+    """
+    Return the configured API key for a provider, or '' if none/needed.
+
+    Resolution order: the in-app **encrypted key store** (keys pasted in
+    Settings) wins, then the environment / `.env` fallback. This lets the
+    packaged app keep keys out of any plaintext file while staying compatible
+    with the dev workflow of putting keys in `backend/.env`.
+    """
     cfg = PROVIDERS.get(name, {})
     env_name = cfg.get("api_key_env")
     if not env_name:
         return ""
+    # In-app encrypted store first (imported lazily to avoid a hard dependency
+    # and any import cycle at module load).
+    try:
+        from services import keystore
+        stored = keystore.get_key(name)
+        if stored:
+            return stored
+    except Exception:
+        pass
     return os.getenv(env_name, "")
 
 

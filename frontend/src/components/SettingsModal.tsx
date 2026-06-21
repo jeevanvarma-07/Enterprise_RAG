@@ -50,6 +50,7 @@ interface ProviderInfo {
   type: string;
   configured: boolean;
   needs_key: boolean;
+  has_stored_key?: boolean;
   model_count: number;
 }
 
@@ -94,6 +95,11 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [saving, setSaving] = useState(false);
+  // Encrypted in-app API-key store: per-provider draft input + which provider
+  // is mid-save, plus whether the backend even supports encrypted storage.
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+  const [keyBusy, setKeyBusy] = useState<string | null>(null);
+  const [keyStorageOk, setKeyStorageOk] = useState(true);
   // Live slider positions while dragging; cleared per-key once committed so the
   // value falls back to the (refetched, clamped) server setting.
   const [draft, setDraft] = useState<Partial<Record<TuneKey, number>>>({});
@@ -106,6 +112,7 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
       const [s, p] = await Promise.all([api.get('/api/settings'), api.get('/api/providers')]);
       setSettings(s.data);
       setProviders(p.data.providers || []);
+      setKeyStorageOk(p.data.key_storage_available !== false);
     } catch {
       /* backend offline — modal shows nothing actionable */
     }
@@ -132,6 +139,36 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
       /* keep optimistic value; backend will reconcile on next open */
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Save a provider's API key into the encrypted in-app store, then refresh the
+  // provider list so its "Configured" state reflects the new key.
+  const saveKey = async (name: string) => {
+    const value = (keyDrafts[name] || '').trim();
+    if (!value) return;
+    setKeyBusy(name);
+    try {
+      await api.post(`/api/providers/${name}/key`, { api_key: value });
+      setKeyDrafts(prev => { const next = { ...prev }; delete next[name]; return next; });
+      await load();
+    } catch {
+      /* leave the draft so the user can retry */
+    } finally {
+      setKeyBusy(null);
+    }
+  };
+
+  // Remove a provider's stored key from the encrypted store.
+  const clearKey = async (name: string) => {
+    setKeyBusy(name);
+    try {
+      await api.delete(`/api/providers/${name}/key`);
+      await load();
+    } catch {
+      /* no-op */
+    } finally {
+      setKeyBusy(null);
     }
   };
 
@@ -418,30 +455,66 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
               </p>
             </section>
 
-            {/* Providers overview */}
+            {/* Providers + API keys */}
             <section>
               <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">LLM Providers</h3>
               <div className="space-y-1.5">
                 {providers.map((p) => (
-                  <div key={p.name} className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/40 border border-white/5">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-slate-300 truncate">{p.label}</span>
-                      <span className="text-[10px] text-slate-600 font-mono shrink-0">{p.model_count} model{p.model_count !== 1 ? 's' : ''}</span>
+                  <div key={p.name} className="px-3 py-2 rounded-lg bg-slate-800/40 border border-white/5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs text-slate-300 truncate">{p.label}</span>
+                        <span className="text-[10px] text-slate-600 font-mono shrink-0">{p.model_count} model{p.model_count !== 1 ? 's' : ''}</span>
+                      </div>
+                      {p.configured ? (
+                        <span className="flex items-center gap-1 text-[10px] text-green-300 shrink-0">
+                          <CheckCircle2 className="w-3 h-3" /> {p.needs_key ? (p.has_stored_key ? 'Key saved' : 'Configured') : 'Local'}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
+                          <KeyRound className="w-3 h-3" /> Needs key
+                        </span>
+                      )}
                     </div>
-                    {p.configured ? (
-                      <span className="flex items-center gap-1 text-[10px] text-green-300 shrink-0">
-                        <CheckCircle2 className="w-3 h-3" /> {p.needs_key ? 'Configured' : 'Local'}
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
-                        <KeyRound className="w-3 h-3" /> Needs key
-                      </span>
+
+                    {/* Key entry — only for providers that take an API key */}
+                    {p.needs_key && keyStorageOk && (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={keyDrafts[p.name] ?? ''}
+                          placeholder={p.has_stored_key ? '•••••••• saved — paste to replace' : `Paste ${p.label} API key`}
+                          onChange={(e) => setKeyDrafts(prev => ({ ...prev, [p.name]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveKey(p.name); }}
+                          className="flex-1 min-w-0 text-[11px] bg-slate-900/70 border border-white/10 rounded px-2 py-1 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50"
+                        />
+                        <button
+                          onClick={() => saveKey(p.name)}
+                          disabled={!((keyDrafts[p.name] || '').trim()) || keyBusy === p.name}
+                          className="text-[10px] px-2 py-1 rounded bg-blue-600/80 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white shrink-0 flex items-center gap-1"
+                        >
+                          {keyBusy === p.name ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Save
+                        </button>
+                        {p.has_stored_key && (
+                          <button
+                            onClick={() => clearKey(p.name)}
+                            disabled={keyBusy === p.name}
+                            title="Remove stored key"
+                            className="text-[10px] px-1.5 py-1 rounded bg-slate-700/60 hover:bg-slate-700 text-slate-300 shrink-0"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}
               </div>
               <p className="text-[11px] text-slate-500 leading-snug mt-2">
-                Add API keys to <code className="text-blue-300 bg-slate-800 px-1 rounded">backend/.env</code> to enable more providers.
+                {keyStorageOk
+                  ? 'Keys are encrypted and stored on this machine only — never in the project or a plaintext file.'
+                  : 'Encrypted key storage is unavailable; set keys via environment variables instead.'}
               </p>
             </section>
           </div>

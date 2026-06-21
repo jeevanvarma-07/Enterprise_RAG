@@ -3,6 +3,9 @@ uvicorn[standard]
 python-multipart
 pydantic-settings
 python-dotenv
+# Encrypted at-rest store for in-app API keys (Fernet). Small, cross-platform
+# wheels; keeps provider keys out of any plaintext .env / the repo.
+cryptography
 
 # LangChain
 langchain
