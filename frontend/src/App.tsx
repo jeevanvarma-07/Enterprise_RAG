@@ -10,8 +10,9 @@ import PipelineTab from './components/PipelineTab';
 import ArchitectureTab from './components/ArchitectureTab';
 import LandingPage from './components/LandingPage';
 import FirstRunWizard from './components/FirstRunWizard';
+import HelpModal from './components/HelpModal';
 import ConnectionStatus from './components/ConnectionStatus';
-import { FileText, Database, RefreshCw, Settings as SettingsIcon, AlertTriangle, KeyRound } from 'lucide-react';
+import { FileText, Database, RefreshCw, Settings as SettingsIcon, AlertTriangle, KeyRound, HelpCircle } from 'lucide-react';
 import { useHealth } from './useHealth';
 import api from './api';
 
@@ -112,6 +113,7 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessionRefresh, setSessionRefresh] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // First-run welcome wizard. We fetch the persisted `onboarded` flag once; until
   // we know its value we keep the wizard hidden (avoids a flash for returning
@@ -214,6 +216,13 @@ function App() {
               )}
             </select>
             <button
+              onClick={() => setHelpOpen(true)}
+              title="Help & about"
+              className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-500/40 transition-colors"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => setSettingsOpen(true)}
               title="Settings"
               className="p-2 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-500/40 transition-colors"
@@ -292,6 +301,8 @@ function App() {
         open={showWizard && !showLanding}
         onComplete={() => { setShowWizard(false); refreshHealth(); }}
       />
+
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} version={healthData?.version} />
     </div>
   );
 }
