@@ -1,0 +1,55 @@
+name: Backend tests
+
+# Runs the FastAPI backend's pytest suite on every push / PR to main, across
+# the supported Python range (3.9 = the runtime/venv used on the dev box and the
+# college-lab machines; 3.11 = the recommended modern interpreter). Tests
+# isolate all state in a temp RAG_DATA_DIR (see backend/tests/conftest.py), so
+# they never touch real uploads/index/history.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-tests.yml"
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          # Embedding/model downloads (HF, fastembed ONNX) cache under here.
+          HF_HOME: ${{ runner.temp }}/hf-cache
+        run: python -m pytest -q

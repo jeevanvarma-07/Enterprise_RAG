@@ -260,13 +260,22 @@ deferred OCR/llama.cpp native bundling.
 
 - [ ] **Branding & UX:** product name, logo, app icon, consistent empty/error/loading states,
       keyboard shortcuts, dark/light theme.
-- [ ] **Robust error handling:** every external call (providers, downloads, OCR) fails
-      gracefully with actionable messages.
-- [ ] **Privacy posture:** "your documents never leave your machine" in offline mode; be
-      explicit about what cloud mode sends where. This is a real selling point for enterprises.
-- [ ] **Onboarding & docs:** in-app help, a short user guide, a one-page "what it does" site.
-- [ ] **Tests & CI:** unit tests for doc processing + RAG pipeline; smoke test that the
-      packaged app boots. Wire into GitHub Actions.
+- [~] **Robust error handling:** chat surfaces server error detail (not a generic "port 8000"
+      message) and distinguishes network vs server failures; missing-key errors point to
+      Settings → LLM Providers (not the dev-only `.env`); empty-index/no-results return friendly
+      guidance; OCR/offline deps fail soft. (Done 2026-06-22.) *Remaining: a sweep of the
+      upload/download/rebuild paths.*
+- [x] **Privacy posture:** ✅ Stated in the first-run wizard and the in-app Help panel —
+      documents/index/history stay local; only the chosen cloud LLM prompt leaves; offline mode
+      sends nothing. Done 2026-06-22.
+- [~] **Onboarding & docs:** ✅ First-run wizard + an always-available in-app **Help & About**
+      panel (getting-started, privacy, modes, version, project link). Done 2026-06-22.
+      *Remaining: a standalone user guide / one-page site.*
+- [~] **Tests & CI:** ✅ 60 backend tests (config, doc processing, indexing, generation,
+      embeddings, modes, reranker/storage, keystore, eval harness) isolated via a temp
+      `RAG_DATA_DIR`. `.github/workflows/backend-tests.yml` runs the suite on push/PR to main
+      across Python 3.9 + 3.11. (Done 2026-06-22.) *Remaining: a boot smoke-test of the packaged
+      app in CI.*
 - [ ] **Licensing:** choose a license (consider a source-available or dual license if you want
       to sell it later). Add `LICENSE` and third-party attributions.
 - [ ] **Versioning & auto-update:** semantic versions, release notes; Tauri updater later.
