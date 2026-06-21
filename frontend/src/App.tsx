@@ -9,6 +9,7 @@ import DataSourcesTab from './components/DataSourcesTab';
 import PipelineTab from './components/PipelineTab';
 import ArchitectureTab from './components/ArchitectureTab';
 import LandingPage from './components/LandingPage';
+import FirstRunWizard from './components/FirstRunWizard';
 import ConnectionStatus from './components/ConnectionStatus';
 import { FileText, Database, RefreshCw, Settings as SettingsIcon, AlertTriangle, KeyRound } from 'lucide-react';
 import { useHealth } from './useHealth';
@@ -112,9 +113,21 @@ function App() {
   const [sessionRefresh, setSessionRefresh] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // First-run welcome wizard. We fetch the persisted `onboarded` flag once; until
+  // we know its value we keep the wizard hidden (avoids a flash for returning
+  // users). Shown only after the landing page is dismissed.
+  const [showWizard, setShowWizard] = useState(false);
+
   // Backend connection + readiness, polled for the header indicator and the
   // first-run banners below the header.
   const { status: health, data: healthData, refresh: refreshHealth } = useHealth();
+
+  // Decide whether to show the welcome wizard (once, on mount).
+  useEffect(() => {
+    api.get('/api/settings')
+      .then(res => { if (res.data?.onboarded !== true) setShowWizard(true); })
+      .catch(() => { /* backend offline — don't trap the user behind a wizard */ });
+  }, []);
 
   // Load the available models from the backend registry (single source of truth)
   useEffect(() => {
@@ -274,6 +287,11 @@ function App() {
       </main>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      <FirstRunWizard
+        open={showWizard && !showLanding}
+        onComplete={() => { setShowWizard(false); refreshHealth(); }}
+      />
     </div>
   );
 }

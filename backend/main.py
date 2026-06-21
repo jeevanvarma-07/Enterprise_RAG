@@ -295,6 +295,7 @@ async def get_settings():
 
 
 class SettingsUpdate(BaseModel):
+    onboarded: Optional[bool] = None      # first-run wizard completed
     mode: Optional[str] = None
     active_provider: Optional[str] = None
     active_model: Optional[str] = None

@@ -380,6 +380,7 @@ def list_providers() -> list[dict[str, Any]]:
 # Settings  (non-secret user preferences, persisted as JSON)
 # ─────────────────────────────────────────────────────────────────────
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "onboarded": False,             # has the first-run welcome wizard been completed?
     "mode": "lite",                 # lite | balanced | power  (drives Phase 3 profiles)
     "active_provider": "groq",
     "active_model": DEFAULT_MODEL,
