@@ -234,8 +234,13 @@ switch changes behavior live.
 - [ ] **Bundle native deps.** Tesseract/Poppler binaries for OCR (or ship as optional add-on),
       and the `llama-cpp-python` runtime for offline mode. *(OCR stays opt-in/Power-gated; not
       needed for the Lite default — deferred.)*
-- [ ] **First-run wizard.** Welcome → pick mode (auto-suggested via `/api/system`) → optionally
-      add API keys → optionally download offline model. *(In-app UX polish — deferred.)*
+- [x] **First-run wizard.** ✅ `frontend/src/components/FirstRunWizard.tsx` — a 3-step portal
+      modal shown once (gated on the new `onboarded` setting): privacy-first welcome → pick
+      performance mode (pre-selected from `/api/system` hardware detection, applied via
+      `/api/settings`) → optionally paste an API key (saved to the encrypted keystore via
+      `POST /api/providers/{name}/key`). Fully skippable; degrades gracefully when the backend
+      is offline or key storage is unavailable; completing it persists `{onboarded: true}`.
+      Offline-model download stays deferred (Power-gated). Done 2026-06-22.
 
 **Exit criteria:** double-click installer on a clean Windows and a clean Linux machine →
 working app, cloud chat out of the box, no manual setup.
@@ -243,9 +248,9 @@ working app, cloud chat out of the box, no manual setup.
 and `tauri build` produced `Enterprise RAG_2.0.0_x64-setup.exe` (NSIS) + `…_x64_en-US.msi`
 under `frontend/src-tauri/target/release/bundle/`. Fixed a clean-install boot crash on the
 Lite freeze (default embedding backend fell back to fastembed; see `PHASE4_PACKAGING.md` §6).
-Remaining: Linux `.AppImage`/`.deb` (build on a Linux host or via the `v*`-tag CI workflow);
-end-to-end smoke test of the installed app; the deferred OCR/llama.cpp native bundling and
-first-run wizard.
+First-run wizard landed 2026-06-22 (see above). Remaining: Linux `.AppImage`/`.deb` (build on a
+Linux host or via the `v*`-tag CI workflow); end-to-end smoke test of the installed app; the
+deferred OCR/llama.cpp native bundling.
 
 ---
 
