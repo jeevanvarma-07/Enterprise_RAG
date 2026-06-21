@@ -1,108 +1,168 @@
-# Enterprise RAG System
+# Enterprise RAG
 
-An enterprise-grade **Retrieval Augmented Generation (RAG)** system that allows organizations to upload documents and query them intelligently using large language models.
+A **local-first, cross-platform desktop app** for Retrieval-Augmented Generation.
+Upload your own documents (PDF, Excel/CSV, images, TXT, URLs), index them locally, and
+chat with them — answers are grounded **only** in your content, with source citations.
+Your documents never leave your machine.
+
+> Originally a web app (4th-sem B.Sc. AI & DS project), now a professional desktop app
+> with offline LLM support, multiple LLM providers, hybrid search, reranking, and
+> performance modes — built entirely with **free / open-source** tools.
 
 ---
 
-## 🚀 Features
+## ✨ Features
 
-- **Multi-format ingestion** — PDF, Excel/CSV, TXT, and Images (OCR)
-- **Batch upload** — Upload 300+ files simultaneously with live progress bar
-- **Advanced Retrieval** — Multi-Query Retrieval + Reciprocal Rank Fusion (RRF) + MMR
-- **Conversation History** — History-aware follow-up question understanding
-- **Vector Store Management** — View, selectively delete, or export the FAISS index
-- **Markdown responses** — Structured, ChatGPT-quality answers with bullet points and headers
-- **Model selection** — Switch between Llama 3.1 8B, Llama 3.3 70B, and Mixtral 8x7B
+- **Local-first & private** — documents, index, and chat history live in a per-user data
+  dir on your machine; nothing is uploaded to a third party (except your chosen LLM call).
+- **Multi-format ingestion** — PDF, Excel/CSV, TXT, images (optional OCR), and URLs.
+- **Advanced RAG** — history-aware query rewriting → multi-query expansion → **hybrid
+  search** (dense FAISS + BM25 keyword) → Reciprocal Rank Fusion → optional cross-encoder
+  **reranking** → grounded, cited Markdown answers. Streamed token-by-token (SSE).
+- **Multiple LLM providers** — Groq, plus any OpenAI-compatible free API (DeepSeek,
+  Mistral, Kimi/Moonshot, z.ai, OpenRouter…), Google Gemini, **local Ollama** (auto-detected),
+  and **fully offline** `llama.cpp` (GGUF) for no-internet use.
+- **Encrypted in-app API keys** — paste keys in Settings; they're **Fernet-encrypted at
+  rest**, never stored in the repo or a plaintext file.
+- **Performance modes** — Lite / Balanced / Power profiles, auto-suggested from detected
+  hardware (RAM / CPU / GPU). The default Lite path runs smoothly on an 8 GB, no-GPU machine.
+- **Torch-free option** — ONNX embeddings (`fastembed`) for a lean install; switch to the
+  PyTorch backend for max accuracy and rebuild the index in one click.
+- **Chat persistence** — sessions + history in SQLite, with a sidebar to revisit them.
+- **Vector store management** — view, selectively delete, or export the FAISS index.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-frontend/          ← React + Vite + TypeScript + Tailwind CSS
+┌──────────────────── Enterprise RAG (desktop) ─────────────────────┐
+│  Tauri 2 shell (Rust)                                             │
+│   • picks a free port, sets a per-user data dir                   │
+│   • spawns the backend sidecar, waits for /api/health            │
+│   • opens the WebView, injecting the API base URL                │
+│                                                                   │
+│   WebView (React build)  ──HTTP──▶  rag-backend (PyInstaller)     │
+│   frontend/dist                     FastAPI + FAISS + embeddings  │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+```
+frontend/                 React 19 + Vite + TypeScript + Tailwind v4 + Framer Motion
+  src-tauri/              Tauri 2 desktop shell (Rust) + PyInstaller sidecar wiring
 backend/
-  main.py          ← FastAPI application with all REST endpoints
+  main.py                 FastAPI app — all REST endpoints, CORS, upload orchestration
+  config.py               typed settings, provider registry, performance profiles
   services/
-    document_processing.py  ← PDF/Excel/Image text extraction
-    indexing.py             ← FAISS vector store management
-    generation.py           ← Multi-Query + MMR + RRF + Chat History RAG pipeline
-  uploads/         ← Uploaded source documents
-  vector_store/    ← FAISS index + metadata.json
+    document_processing.py PDF/Excel/CSV/image/txt extraction + chunking
+    indexing.py            VectorStoreManager — FAISS + metadata
+    generation.py          RAGPipeline — multi-query + hybrid + RRF + rerank + LLM
+    providers.py           multi-provider LLM layer (cloud / Ollama / llama.cpp)
+    embeddings.py          pluggable embeddings (sentence-transformers | fastembed/ONNX)
+    keystore.py            Fernet-encrypted API-key store
+    storage.py             SQLite chat sessions + history
+    system_info.py         hardware detection → suggested performance mode
 ```
 
 ---
 
-## ⚙️ Setup
+## 🚀 Run from source (development)
 
-### Backend
+**Backend** (Python 3.9–3.11):
 ```bash
 cd backend
 python -m venv venv
-.\venv\Scripts\activate        # Windows
+venv/Scripts/activate          # Windows (bash);  Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-### Frontend
+**Frontend:**
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev                     # http://localhost:5173
 ```
 
-Create `backend/.env`:
+API keys: set them in-app (Settings → LLM Providers), or for dev put them in `backend/.env`
+(e.g. `GROQ_API_KEY=...`). `.env` is gitignored — never commit a key.
+
+One-click on Windows: `START_PROJECT.bat`.
+
+---
+
+## 📦 Build the desktop app
+
+Requires Rust (`rustup`) on the build machine; everything else ships inside the app.
+
+```bash
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts/build-desktop.ps1
+# Linux / macOS / Git-Bash
+scripts/build-desktop.sh
 ```
-GROQ_API_KEY=your_groq_api_key_here
+
+This freezes the backend with PyInstaller, stages it as a Tauri sidecar, and builds the
+installers into `frontend/src-tauri/target/release/bundle/` (Windows `.exe`/`.msi`;
+Linux `.AppImage`/`.deb`). See [`PHASE4_PACKAGING.md`](PHASE4_PACKAGING.md) for details and
+the Lite vs Full build flavours.
+
+---
+
+## 🧠 RAG pipeline
+
+```
+User query
+  └─ history-aware rewrite (make follow-ups standalone)
+       └─ multi-query: LLM generates query variations
+            └─ each variation → hybrid retrieval (dense MMR + BM25), fused via RRF
+                 └─ optional cross-encoder reranking (Balanced/Power)
+                      └─ (+ exact CSV/Excel numeric-ID lookup prepended to context)
+                           └─ chosen LLM → streamed Markdown answer + sources
 ```
 
 ---
 
-## 📡 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/upload` | Upload and index documents |
-| POST | `/api/chat` | Query with conversation history |
-| GET | `/api/index/status` | Index status and chunk count |
-| GET | `/api/index/documents` | List all indexed files |
-| DELETE | `/api/index/documents/{filename}` | Delete a specific file |
-| POST | `/api/index/documents/batch-delete` | Delete multiple files |
-| DELETE | `/api/index/clear` | Clear the entire index |
-| GET | `/api/index/export` | Download FAISS index as ZIP |
-
----
-
-## 🧠 RAG Pipeline
-
-```
-User Query
-    │
-    ├── History-aware query rewriting (chat context)
-    │
-    └── Multi-Query Generation (3 query variations)
-             │
-             ├── Query 1 ──▶ MMR Retrieval ──▶ [docs]
-             ├── Query 2 ──▶ MMR Retrieval ──▶ [docs]
-             └── Query 3 ──▶ MMR Retrieval ──▶ [docs]
-                                    │
-                            Reciprocal Rank Fusion
-                                    │
-                              Top-6 diverse chunks
-                                    │
-                              Groq LLM (Llama/Mixtral)
-                                    │
-                            Markdown-formatted Answer
-```
-
----
-
-## 🛠️ Tech Stack
+## 🛠️ Tech stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | React, Vite, TypeScript, Tailwind CSS, Framer Motion |
+| Desktop shell | Tauri 2 (Rust) + WebView; PyInstaller-frozen backend sidecar |
+| Frontend | React 19, Vite, TypeScript, Tailwind v4, Framer Motion |
 | Backend | FastAPI, Uvicorn, Python 3.9+ |
-| Embeddings | HuggingFace `all-MiniLM-L6-v2` |
-| Vector DB | FAISS (local), upgradeable to Pinecone |
-| LLM | Groq API (Llama 3.1, Llama 3.3, Mixtral) |
-| Document Parsing | PyPDF2, pandas, pytesseract, easyocr |
+| Embeddings | `all-MiniLM-L6-v2` via sentence-transformers **or** fastembed (ONNX, torch-free) |
+| Vector store | FAISS (CPU) + BM25 (`rank_bm25`) hybrid |
+| Reranking | `flashrank` cross-encoder (optional, ONNX) |
+| LLM | Groq · OpenAI-compatible providers · Gemini · Ollama · local `llama.cpp` |
+| State | SQLite (chat history) + JSON settings; Fernet-encrypted keys |
+| Doc parsing | PyPDF2, pandas, openpyxl, Pillow, optional Tesseract/EasyOCR |
+
+---
+
+## 📁 Data location
+
+User content lives in the per-user app-data dir (never in the repo or Program Files):
+
+| OS | Path |
+|----|------|
+| Windows | `%APPDATA%\com.jeevanvarma.enterpriserag\data` |
+| Linux | `~/.local/share/com.jeevanvarma.enterpriserag/data` |
+
+It holds `uploads/`, `vector_store/`, `settings.json`, `rag.db`, encrypted keys, and
+downloaded models.
+
+---
+
+## 🧪 Tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+---
+
+*Author: Jeevan Varma R. Built primarily with AI coding assistants. See
+[`CLAUDE.md`](CLAUDE.md) and [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) for the
+project guide and roadmap.*
