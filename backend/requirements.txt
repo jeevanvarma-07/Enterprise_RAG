@@ -1,0 +1,41 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic-settings
+python-dotenv
+
+# LangChain
+langchain
+langchain-groq
+langchain-openai          # OpenAI-compatible providers: DeepSeek, Mistral, Kimi, z.ai, Gemini, Ollama
+langchain-community
+langchain-huggingface
+langchain-core
+
+# Offline / local LLM (OPTIONAL, Power mode — large native build, not installed by default)
+# llama-cpp-python
+
+# Vector store
+faiss-cpu
+
+# Hybrid search — BM25 keyword retrieval fused with dense vectors (pure Python, Lite-safe)
+rank_bm25
+
+# Reranking (OPTIONAL, Power/balanced mode) — tiny ONNX cross-encoder, no torch.
+# Off by default on the Lite path; enable by installing this + setting mode to balanced/power.
+# flashrank
+
+# Embeddings
+sentence-transformers
+# Torch-free embedding backend (ONNX, ~no extra weight). Lets the Lite profile
+# embed without pulling torch (~2 GB). Same all-MiniLM-L6-v2 model / 384-dim space.
+# Select it in Settings → Embeddings → "Light (ONNX)", then Rebuild index.
+fastembed
+
+# Document parsing
+PyPDF2
+pandas
+openpyxl
+pytesseract
+easyocr
+Pillow

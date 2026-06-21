@@ -1,0 +1,41 @@
+
+==========================================================================
+ANTIGRAVITY PROMPT — PASTE THIS WHEN STARTING ON A NEW LAPTOP
+==========================================================================
+
+Hey Antigravity, I have transferred the Enterprise RAG project to this new 
+laptop. The project folder is now at C:\Enterprise_RAG.
+
+Here is the project structure:
+- C:\Enterprise_RAG\backend\        → FastAPI Python backend (main.py)
+- C:\Enterprise_RAG\backend\.env    → Contains GROQ_API_KEY
+- C:\Enterprise_RAG\frontend\       → React + Vite + TypeScript frontend
+- C:\Enterprise_RAG\START_PROJECT.bat → One-click launcher
+
+The project uses:
+- Backend: Python 3.11, FastAPI, LangChain, FAISS vector store, GROQ API
+- Frontend: React 19, Vite 7, TypeScript, TailwindCSS v4, Axios
+
+I need you to help me set up and run this project on this laptop. Please:
+
+1. Check if Python 3.11 is installed (run: python --version)
+2. Check if Node.js is installed (run: node --version and npm --version)
+3. If Python is missing, tell me to install it from python.org and add it to PATH
+4. If Node is missing, tell me to install LTS from nodejs.org
+5. Set up the backend:
+   - Go to C:\Enterprise_RAG\backend
+   - Create venv: python -m venv venv
+   - Activate: venv\Scripts\activate
+   - Install packages: pip install -r requirements.txt
+   - Test: uvicorn main:app --reload --port 8000
+6. Set up the frontend:
+   - Go to C:\Enterprise_RAG\frontend
+   - Run: npm install
+   - Test: npm run dev
+7. Once both work, tell me to double-click START_PROJECT.bat to run everything
+
+If any step fails with an error, read the error and fix it for me.
+The project was fully working before. Do NOT change any code — just fix 
+environment/setup issues. The goal is to get the app running at http://localhost:5173
+
+==========================================================================

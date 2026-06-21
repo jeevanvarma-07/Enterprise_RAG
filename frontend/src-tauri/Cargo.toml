@@ -1,0 +1,29 @@
+[package]
+name = "enterprise-rag"
+version = "2.0.0"
+description = "Enterprise RAG — chat with your own documents, fully local."
+authors = ["Jeevan Varma R"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# The library that `main.rs` calls into. Tauri 2's recommended split.
+[lib]
+name = "enterprise_rag_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Release profile tuned for a small installer.
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

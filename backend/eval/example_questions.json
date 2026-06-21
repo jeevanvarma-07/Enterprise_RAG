@@ -1,0 +1,8 @@
+[
+  {"query": "Where is the Eiffel Tower located?", "expects": ["Paris"]},
+  {"query": "How do plants turn light into energy?", "expects": ["Photosynthesis"]},
+  {"query": "What is the role of employee 7741?", "expects": ["Data Scientist"]},
+  {"query": "How tall is the tallest mountain on Earth?", "expects": ["8849"]},
+  {"query": "What is the refund window for returns?", "expects": ["30 days"]},
+  {"query": "What was the Q3 revenue?", "expects": ["4.2 million"]}
+]
