@@ -76,7 +76,7 @@ def _build_groq(provider: str, model: str, temperature: float, max_tokens: int):
     api_key = config.provider_api_key(provider)
     if not api_key:
         raise ValueError(
-            "No Groq API key found. Add GROQ_API_KEY to backend/.env "
+            "No Groq API key configured. Add one in Settings → LLM Providers "
             "(get a free key at https://console.groq.com/keys)."
         )
     return ChatGroq(
@@ -97,9 +97,8 @@ def _build_openai_compatible(
     api_key = config.provider_api_key(provider)
     if not api_key:
         label = cfg.get("label", provider)
-        env = cfg.get("api_key_env", f"{provider.upper()}_API_KEY")
         raise ValueError(
-            f"No API key for {label}. Add {env} to backend/.env to use it."
+            f"No API key configured for {label}. Add one in Settings → LLM Providers."
         )
     base_url = cfg.get("base_url")
     if not base_url:

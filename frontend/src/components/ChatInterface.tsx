@@ -237,7 +237,18 @@ export default function ChatInterface({
           chat_history: historyToSend,
         }),
       });
-      if (!resp.ok || !resp.body) throw new Error('No stream from server');
+      if (!resp.ok) {
+        // The endpoint normally streams errors as `error` events (HTTP 200),
+        // so a non-OK status means it failed before streaming — surface its
+        // detail if there is one rather than a generic message.
+        let detail = '';
+        try {
+          const body = await resp.json();
+          detail = body?.detail || '';
+        } catch { /* not JSON — fall back to the status text */ }
+        throw new Error(detail || `Server error (${resp.status} ${resp.statusText || 'request failed'}).`);
+      }
+      if (!resp.body) throw new Error('The server returned an empty response stream.');
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -298,9 +309,15 @@ export default function ChatInterface({
           }
         } catch { /* history is best-effort; never block the chat */ }
       }
-    } catch {
+    } catch (err) {
+      // Distinguish a server-reported problem (has a message) from a raw
+      // network failure (fetch throws a TypeError with no useful detail).
+      const msg = err instanceof Error ? err.message : '';
+      const isNetwork = !msg || /failed to fetch|networkerror|load failed/i.test(msg);
       patchLastMessage({
-        content: '**Error:** Could not reach the backend. Please ensure the server is running on port 8000.',
+        content: isNetwork
+          ? "**Error:** Couldn't reach the backend. Make sure it's running, then try again."
+          : `**Error:** ${msg}`,
       });
     } finally {
       setLoading(false);
