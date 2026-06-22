@@ -129,6 +129,11 @@ backend/vector_store/
 backend/models/
 backend/rag.db
 backend/settings.json
+# Encrypted in-app API-key store (Fernet) + its key — NEVER commit these.
+keys.enc
+secret.key
+backend/keys.enc
+backend/secret.key
 
 # Node / frontend
 node_modules/

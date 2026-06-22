@@ -368,18 +368,23 @@ class RAGPipeline:
         exact_match_text = _scan_uploads_for_exact_match(query)
         faiss_context = "\n\n---\n\n".join(d.page_content for d in fused_docs)
 
-        # Trim the retrieved context to the configured character budget. The
-        # exact-match rows are the precise hit, so they're kept in full and only
-        # the semantic context is trimmed to fit what's left.
+        # Trim the retrieved context to the configured character budget so a
+        # single request can't exceed the provider's tokens-per-minute limit
+        # (the 413 "Request too large" on Groq's free tier). The exact-match
+        # rows are the precise hit, so they get first claim on the budget; the
+        # semantic context fills whatever's left. BOTH are capped, so the total
+        # never exceeds the budget even when an exact match is itself huge
+        # (e.g. a big CSV/Excel record dump).
         ctx_budget = budget["context_chars"]
         if exact_match_text:
-            remaining = max(500, ctx_budget - len(exact_match_text))
-            context_text = (
-                "=== EXACT MATCH (direct record lookup) ===\n"
-                + exact_match_text
-                + "\n\n=== ADDITIONAL CONTEXT (semantic search) ===\n"
-                + faiss_context[:remaining]
-            )
+            exact = exact_match_text[:ctx_budget]
+            remaining = ctx_budget - len(exact)
+            context_text = "=== EXACT MATCH (direct record lookup) ===\n" + exact
+            if remaining > 200 and faiss_context:
+                context_text += (
+                    "\n\n=== ADDITIONAL CONTEXT (semantic search) ===\n"
+                    + faiss_context[:remaining]
+                )
         else:
             context_text = faiss_context[:ctx_budget]
 

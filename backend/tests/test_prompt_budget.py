@@ -134,3 +134,26 @@ def test_prepare_caps_context_chars(restore_settings, monkeypatch):
     # only the retrieved-context portion the budget actually caps.
     template_xs = SYSTEM_PROMPT.format(context="").count("x")
     assert system.content.count("x") - template_xs <= 500
+
+
+def test_prepare_caps_context_when_exact_match_is_huge(restore_settings, monkeypatch):
+    """A large exact-match block must not blow past the budget on its own — the
+    whole point of the 413 fix. Exact match gets first claim, but is still capped."""
+    config.save_settings({"history_turns": 0, "context_chars": 500})
+    monkeypatch.setattr("services.generation.build_chat_model", lambda p, m: _FakeLLM())
+    # Simulate a giant CSV/Excel record dump as the exact-match hit.
+    monkeypatch.setattr(
+        "services.generation._scan_uploads_for_exact_match", lambda *a, **k: "E" * 9000
+    )
+
+    p = RAGPipeline(vector_manager=_FakeVM([_doc("y" * 5000)]))
+    llm, messages, sources, early, fallback, notice = p._prepare(
+        "q", config.DEFAULT_MODEL, "groq", []
+    )
+    system = next(m for m in messages if isinstance(m, SystemMessage))
+    # Measure the injected context by the length it adds over the empty template
+    # — exact, and free of char-counting noise. Without the cap this would be
+    # ~9000 chars; with it the body must stay within the 500-char budget (a small
+    # allowance covers the fixed "=== EXACT MATCH ===" section header).
+    injected = len(system.content) - len(SYSTEM_PROMPT.format(context=""))
+    assert injected <= 500 + 100

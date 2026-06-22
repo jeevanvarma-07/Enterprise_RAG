@@ -166,6 +166,41 @@ PROVIDERS: dict[str, dict[str, Any]] = {
             {"id": "glm-4-flash", "label": "GLM-4 Flash"},
         ],
     },
+    "cerebras": {
+        # Wafer-scale inference — very fast, 1M tokens/day free tier. A strong
+        # backup for the laptop demo: far roomier than Groq's 6k/min, so the
+        # "Request too large" 413 is much less likely.
+        "label": "Cerebras",
+        "type": "openai",
+        "base_url": "https://api.cerebras.ai/v1",
+        "api_key_env": "CEREBRAS_API_KEY",
+        "models": [
+            {"id": "llama-3.3-70b", "label": "Llama 3.3 70B (quality)"},
+            {"id": "llama3.1-8b", "label": "Llama 3.1 8B (fast)"},
+        ],
+    },
+    "openrouter": {
+        # Aggregator: many models behind one key, including several free ones
+        # (the ":free" suffix). Handy fallback that doesn't burn a single
+        # provider's quota.
+        "label": "OpenRouter",
+        "type": "openai",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "models": [
+            {"id": "meta-llama/llama-3.3-70b-instruct:free", "label": "Llama 3.3 70B (free)"},
+            {"id": "deepseek/deepseek-chat-v3-0324:free", "label": "DeepSeek V3 (free)"},
+        ],
+    },
+    "opencode": {
+        "label": "OpenCode Zen",
+        "type": "openai",
+        "base_url": "https://opencode.ai/zen/v1",
+        "api_key_env": "OPENCODE_API_KEY",
+        "models": [
+            {"id": "grok-code", "label": "Grok Code"},
+        ],
+    },
     # ── Offline / local (no API key, no internet) ───────────────────────
     "ollama": {
         "label": "Ollama (local, auto-detected)",
