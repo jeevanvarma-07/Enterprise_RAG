@@ -133,13 +133,16 @@ async def upload_documents(files: List[UploadFile] = File(...)):
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        answer, sources = rag_pipeline.generate_response(
+        answer, sources, notice = rag_pipeline.generate_response(
             request.message,
             request.model_name,
             chat_history=request.chat_history,
             provider=request.provider,
         )
-        return {"response": answer, "sources": sources}
+        resp = {"response": answer, "sources": sources}
+        if notice:
+            resp["notice"] = notice          # set only when a provider fallback happened
+        return resp
     except ValueError as e:
         # Config problems (missing API key, unknown provider) — actionable 400.
         raise HTTPException(status_code=400, detail=str(e))

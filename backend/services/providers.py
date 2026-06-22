@@ -167,6 +167,38 @@ def _build_llamacpp(model: str, temperature: float, max_tokens: int):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Fallback ordering
+# ─────────────────────────────────────────────────────────────────────
+def fallback_candidates(provider: Optional[str], model: str) -> List[tuple]:
+    """
+    Ordered (provider, model) pairs to attempt for one chat request.
+
+    The requested pair comes first; then every OTHER currently-configured
+    provider's first registered model, in registry order, as fallback targets.
+    Providers with no static model id (a fresh Ollama / llama.cpp before any
+    model exists) are skipped here — they're reached via their own detection
+    path, not blind fallback.
+
+    Pure and side-effect-free (no network), so the generation layer gets a
+    deterministic order and this is trivial to unit-test.
+    """
+    primary_provider = provider or config.provider_for_model(model)
+    candidates: List[tuple] = [(primary_provider, model)]
+    seen = {primary_provider}
+    for name, cfg in config.PROVIDERS.items():
+        if name in seen:
+            continue
+        if not config.provider_is_configured(name):
+            continue
+        models = cfg.get("models") or []
+        if not models:
+            continue
+        candidates.append((name, models[0]["id"]))
+        seen.add(name)
+    return candidates
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Ollama auto-detection  (so users with Ollama get offline models for free)
 # ─────────────────────────────────────────────────────────────────────
 def detect_ollama(timeout: float = 0.5) -> dict[str, Any]:

@@ -11,9 +11,14 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 import config
-from services.providers import build_chat_model
+from services.providers import build_chat_model, fallback_candidates
 
 load_dotenv()
+
+# Sentinel marking "the stream ended without yielding anything" (distinct from a
+# real empty-string chunk), used by the streaming fallback to tell a clean empty
+# response apart from a provider that never started.
+_STREAM_EMPTY = object()
 
 
 def _scan_uploads_for_exact_match(query: str, uploads_dir: Optional[str] = None) -> str:
@@ -106,13 +111,60 @@ class RAGPipeline:
     def __init__(self, vector_manager):
         self.vector_manager = vector_manager
 
-    def _build_llm(self, model_name: str, provider: Optional[str] = None) -> Any:
+    # ─── Provider selection + graceful fallback ──────────────────────────
+    def _candidates(self, model_name: str, provider: Optional[str]) -> List[tuple]:
         """
-        Build a chat model via the provider factory. `provider` may be None,
-        in which case it's resolved from the model id. Raises ValueError with a
-        user-facing message if the chosen provider has no key configured.
+        Ordered (provider, model) pairs to try for this request. With fallback
+        enabled (the default) it's the chosen provider followed by every other
+        configured provider; otherwise just the chosen one (legacy behavior).
         """
-        return build_chat_model(provider, model_name)
+        if config.fallback_enabled():
+            return fallback_candidates(provider, model_name)
+        prov = provider or config.provider_for_model(model_name)
+        return [(prov, model_name)]
+
+    @staticmethod
+    def _label(provider: str, model: str) -> str:
+        """Human-readable 'Provider · model' string for fallback notices."""
+        cfg = config.PROVIDERS.get(provider, {})
+        return f"{cfg.get('label', provider)} · {model}"
+
+    @staticmethod
+    def _join_notice(*parts: str) -> str:
+        """Join the non-empty notice fragments into one space-separated string."""
+        return " ".join(p for p in parts if p)
+
+    def _build_first_working(self, candidates: List[tuple]):
+        """
+        Build the first candidate whose chat model *constructs* (i.e. its key /
+        config is present). This handles build-time failures — typically a
+        missing API key — by moving on to the next configured provider.
+
+        Returns (llm, provider, model, remaining, build_errors): `llm` is None if
+        none could be built, `remaining` is the candidates after the chosen one
+        (for runtime fallback), `build_errors` collects the per-candidate reasons.
+        """
+        build_errors: List[str] = []
+        for i, (prov, model) in enumerate(candidates):
+            try:
+                llm = build_chat_model(prov, model)
+                return llm, prov, model, candidates[i + 1:], build_errors
+            except Exception as e:  # missing key / unknown provider / bad config
+                build_errors.append(f"{self._label(prov, model)}: {e}")
+        return None, None, None, [], build_errors
+
+    @staticmethod
+    def _format_build_error(errors: List[str]) -> str:
+        """Turn collected build failures into one user-facing message."""
+        if not errors:
+            return ("No LLM provider is configured. Add an API key in "
+                    "Settings → LLM Providers.")
+        if len(errors) == 1:
+            # Only one candidate (fallback off, or a single provider) — preserve
+            # the factory's precise message, dropping the 'Label · model: ' prefix.
+            return errors[0].split(": ", 1)[-1] if ": " in errors[0] else errors[0]
+        return ("No usable LLM provider — tried " + "; ".join(errors) +
+                ". Add or fix a key in Settings → LLM Providers.")
 
     def _deserialize_history(self, history: list) -> list:
         """Convert [{role, content}] dicts into LangChain message objects."""
@@ -228,20 +280,36 @@ class RAGPipeline:
         Shared retrieval + prompt assembly used by BOTH the streaming and
         non-streaming paths, so the RAG logic lives in exactly one place.
 
-        Returns (llm, messages, sources, early_text):
+        Returns (llm, messages, sources, early_text, fallback, notice):
           - early_text is a ready-to-send message when there's nothing to answer
             from (no index / no relevant content); messages will be None then.
           - otherwise early_text is None and (llm, messages, sources) are ready.
-        May raise ValueError from _build_llm (e.g. missing API key) — callers
+          - fallback: remaining (provider, model) pairs to try if `llm` fails at
+            generation time (empty when fallback is off or `llm` is the last one).
+          - notice: a user-facing note when the originally-chosen provider was
+            unavailable and a fallback was selected at build time (else "").
+        May raise ValueError (e.g. no provider has a usable key) — callers
         translate that into a user-facing error.
         """
         if not self.vector_manager.is_loaded():
             return (
                 None, None, [],
                 "**No documents indexed yet.** Please upload files first via the Ingest Knowledge panel.",
+                [], "",
             )
 
-        llm = self._build_llm(model_name, provider)
+        candidates = self._candidates(model_name, provider)
+        llm, prov, model, fallback, build_errors = self._build_first_working(candidates)
+        if llm is None:
+            raise ValueError(self._format_build_error(build_errors))
+
+        # If the chosen provider couldn't be built and we fell back, tell the user.
+        notice = ""
+        if (prov, model) != candidates[0]:
+            notice = (
+                f"{self._label(*candidates[0])} is unavailable, so this answer "
+                f"was generated with {self._label(prov, model)}."
+            )
 
         # 1. Deserialize history
         history_messages = self._deserialize_history(chat_history or [])
@@ -256,6 +324,7 @@ class RAGPipeline:
             return (
                 llm, None, [],
                 "**No relevant content found** in the uploaded documents for your question.",
+                [], "",
             )
 
         # 4. Build sources list for frontend transparency
@@ -305,7 +374,7 @@ class RAGPipeline:
             + history_messages
             + [HumanMessage(content=query)]
         )
-        return llm, messages, sources, None
+        return llm, messages, sources, None, fallback, notice
 
     def generate_response(
         self,
@@ -314,14 +383,42 @@ class RAGPipeline:
         chat_history: Optional[list] = None,
         provider: Optional[str] = None,
     ) -> tuple:
-        """Returns (answer: str, sources: list[dict]). Non-streaming."""
-        llm, messages, sources, early_text = self._prepare(
+        """
+        Returns (answer: str, sources: list[dict], notice: str). Non-streaming.
+        `notice` is "" unless a provider fallback happened (build- or run-time).
+        """
+        llm, messages, sources, early_text, fallback, notice = self._prepare(
             query, model_name, provider, chat_history
         )
         if early_text is not None:
-            return (early_text, [])
-        result = llm.invoke(messages)
-        return (result.content, sources)
+            return (early_text, [], "")
+        answer, run_notice = self._invoke_with_fallback(llm, messages, fallback)
+        return (answer, sources, self._join_notice(notice, run_notice))
+
+    def _invoke_with_fallback(self, llm: Any, messages: list, fallback: List[tuple]) -> tuple:
+        """
+        Invoke `llm`; on any runtime error (rate-limit, network, provider down)
+        try each fallback (provider, model) in turn. Returns (answer, notice).
+        Raises ValueError only when every candidate fails.
+        """
+        try:
+            return llm.invoke(messages).content, ""
+        except Exception as primary_err:
+            errors = [str(primary_err)]
+            for prov, model in fallback:
+                try:
+                    alt = build_chat_model(prov, model)
+                    content = alt.invoke(messages).content
+                    return content, (
+                        f"The selected model failed, so this answer was generated "
+                        f"with {self._label(prov, model)}."
+                    )
+                except Exception as e:
+                    errors.append(str(e))
+            raise ValueError(
+                "The language model request failed and no fallback provider "
+                "succeeded: " + " | ".join(errors)
+            )
 
     def generate_response_stream(
         self,
@@ -333,13 +430,14 @@ class RAGPipeline:
         """
         Generator of SSE-friendly event dicts for token streaming:
           {"type": "sources", "sources": [...]}   (once, before the answer)
+          {"type": "notice", "content": "..."}     (at most once, if a fallback ran)
           {"type": "token",   "content": "..."}    (many)
           {"type": "done"}                          (once, at the end)
         Retrieval runs first (fast, non-streamed); only the final LLM answer
         streams token-by-token. ValueError from _prepare propagates to the
         endpoint, which emits an {"type":"error"} event.
         """
-        llm, messages, sources, early_text = self._prepare(
+        llm, messages, sources, early_text, fallback, notice = self._prepare(
             query, model_name, provider, chat_history
         )
         if early_text is not None:
@@ -348,9 +446,58 @@ class RAGPipeline:
             return
 
         yield {"type": "sources", "sources": sources}
-        for chunk in llm.stream(messages):
-            text = getattr(chunk, "content", "") or ""
-            if text:
-                yield {"type": "token", "content": text}
-        yield {"type": "done"}
+        yield from self._stream_with_fallback(llm, messages, fallback, notice)
+
+    def _stream_with_fallback(self, llm: Any, messages: list, fallback: List[tuple], build_notice: str):
+        """
+        Stream tokens from `llm`; if a provider fails *before its first token*,
+        transparently fall back to the next configured one. A mid-stream failure
+        (after tokens were already sent) can't be retried without duplicating
+        output, so it surfaces as an `error` event. Emits a `notice` event when a
+        fallback (build-time or runtime) was used.
+        """
+        attempts = [(None, llm)] + [(cand, None) for cand in fallback]
+        errors: List[str] = []
+        for idx, (cand, prebuilt) in enumerate(attempts):
+            try:
+                model_obj = prebuilt or build_chat_model(cand[0], cand[1])
+                stream = model_obj.stream(messages)
+                first = next(stream, _STREAM_EMPTY)   # may raise: auth / rate-limit / offline
+            except Exception as e:
+                errors.append(str(e))
+                continue
+
+            # This attempt started — announce any fallback, then stream its tokens.
+            notice = build_notice
+            if idx > 0:
+                notice = self._join_notice(
+                    build_notice,
+                    f"The selected model failed, so this answer was generated "
+                    f"with {self._label(cand[0], cand[1])}.",
+                )
+            if notice:
+                yield {"type": "notice", "content": notice}
+
+            try:
+                if first is not _STREAM_EMPTY:
+                    text = getattr(first, "content", "") or ""
+                    if text:
+                        yield {"type": "token", "content": text}
+                for chunk in stream:
+                    text = getattr(chunk, "content", "") or ""
+                    if text:
+                        yield {"type": "token", "content": text}
+            except Exception as e:
+                # Failed after streaming began — can't restart cleanly.
+                yield {"type": "error", "detail": f"The model stopped mid-response: {e}"}
+                return
+            yield {"type": "done"}
+            return
+
+        # Nothing started successfully.
+        yield {
+            "type": "error",
+            "detail": "The language model request failed and no fallback provider "
+                      "succeeded: " + " | ".join(errors),
+        }
 

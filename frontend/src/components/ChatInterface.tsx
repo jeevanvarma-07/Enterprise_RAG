@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, Bot, User, Sparkles, Copy, Trash2, ChevronDown, ChevronUp, FileText, Check, X, Download } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Copy, Trash2, ChevronDown, ChevronUp, FileText, Check, X, Download, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,6 +12,7 @@ interface Message {
   content: string;
   timestamp: string;
   sources?: Source[];
+  notice?: string;   // e.g. "Provider X unavailable; answered with Y" (provider fallback)
 }
 
 const EXAMPLE_QUERIES = [
@@ -276,6 +277,9 @@ export default function ChatInterface({
           if (evt.type === 'sources') {
             answerSources = evt.sources || [];
             patchLastMessage({ sources: answerSources });
+          } else if (evt.type === 'notice') {
+            // A provider fallback happened — show a subtle heads-up above the answer.
+            patchLastMessage({ notice: evt.content || '' });
           } else if (evt.type === 'token') {
             answer += evt.content || '';
             patchLastMessage({ content: answer });
@@ -426,6 +430,12 @@ export default function ChatInterface({
                   {msg.role === 'ai' && msg.content && (
                     <div className="absolute top-2 right-2">
                       <CopyButton text={msg.content} />
+                    </div>
+                  )}
+                  {msg.role === 'ai' && msg.notice && (
+                    <div className="mb-2 flex items-start gap-1.5 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                      <span>{msg.notice}</span>
                     </div>
                   )}
                   {msg.role === 'ai' ? (

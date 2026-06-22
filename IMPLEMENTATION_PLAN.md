@@ -93,8 +93,15 @@ out of the repo, settings + SQLite in place, and a single axios client.
       offline" the app downloads a small quantized GGUF (e.g. Qwen2.5-3B-Instruct or
       Llama-3.2-3B, Q4_K_M ~2 GB) to the app-data dir. GPU offload on the 3060; on the 8 GB
       laptop keep cloud as default and warn that local will be slow.
-- [ ] **Graceful fallback.** If the chosen provider errors (rate limit / no key / offline),
-      surface a clear message and optionally fall back to another configured provider.
+- [x] **Graceful fallback.** ✅ When the chosen provider can't build (missing key) or
+      errors at generation (rate-limit / network / offline), the pipeline transparently
+      retries the next *configured* provider's default model. `providers.fallback_candidates()`
+      gives a deterministic order (chosen first, then other configured providers); generation
+      handles both build-time (`_build_first_working`) and runtime (`_invoke_with_fallback` /
+      streaming `_stream_with_fallback`, which falls back only before the first token) failures,
+      and a `notice` (JSON field + SSE `notice` event) tells the user which provider answered.
+      Gated by `config.fallback_enabled()` (`llm_fallback` setting, on by default); a single
+      configured provider behaves exactly as before. 16 new tests. Done 2026-06-22.
 - [ ] **Embedding provider choice.** Allow local embeddings (default) or a free embedding API,
       mirroring the LLM abstraction (keeps offline truly offline).
 

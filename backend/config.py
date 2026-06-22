@@ -388,6 +388,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "embedding_model": EMBEDDING_MODEL,
     "rerank": "auto",               # auto | on | off  (auto = follow profile)
     "ocr": "auto",                  # auto | on | off  (auto = follow profile; off on Lite)
+    "llm_fallback": True,           # auto-retry with another configured provider if the chosen LLM fails
     # Retrieval tuning — defaults mirror the long-standing hardcoded values, so
     # behavior is unchanged until a user deliberately tweaks them. All clamped
     # to safe ranges in retrieval_params() so a bad value can't break chat.
@@ -451,6 +452,18 @@ def rerank_enabled() -> bool:
     if pref in ("off", "false", "0", "no"):
         return False
     return MODE_PROFILES[active_mode()]["rerank"]
+
+
+def fallback_enabled() -> bool:
+    """
+    Whether to automatically retry with another *configured* provider when the
+    chosen LLM fails (missing key, rate-limit, network / offline). On by default;
+    a user with only one configured provider sees no change — there is simply
+    nothing to fall back to. Disable by setting `llm_fallback` to a falsey value.
+    """
+    s = get_settings()
+    pref = str(s.get("llm_fallback", True)).lower()
+    return pref not in ("off", "false", "0", "no")
 
 
 def get_settings() -> dict[str, Any]:
