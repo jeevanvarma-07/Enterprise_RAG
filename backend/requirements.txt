@@ -7,13 +7,16 @@ python-dotenv
 # wheels; keeps provider keys out of any plaintext .env / the repo.
 cryptography
 
-# LangChain
-langchain
-langchain-groq
-langchain-openai          # OpenAI-compatible providers: DeepSeek, Mistral, Kimi, z.ai, Gemini, Ollama
-langchain-community
-langchain-huggingface
-langchain-core
+# LangChain — pinned to the 0.3.x line the code targets. Unpinned, a fresh
+# install (esp. on newer Python) jumps to langchain 1.x, which removed
+# `langchain.chains` and `langchain.text_splitter` and breaks imports.
+langchain>=0.3,<0.4
+langchain-core>=0.3,<0.4
+langchain-community>=0.3,<0.4
+langchain-text-splitters>=0.3,<0.4
+langchain-groq>=0.3,<1.0
+langchain-openai>=0.3,<1.0          # OpenAI-compatible: DeepSeek, Mistral, Kimi, z.ai, Gemini, Ollama
+langchain-huggingface>=0.3,<1.0
 
 # Offline / local LLM (OPTIONAL, Power mode — large native build, not installed by default)
 # llama-cpp-python

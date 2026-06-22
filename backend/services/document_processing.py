@@ -4,7 +4,12 @@ from typing import List, Tuple
 import PyPDF2
 import pandas as pd
 from PIL import Image
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# Prefer the standalone package (its canonical home since langchain 0.2);
+# fall back to the legacy re-export for older installs.
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:  # pragma: no cover - legacy langchain only
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 import config
 
