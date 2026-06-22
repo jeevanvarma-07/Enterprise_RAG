@@ -294,6 +294,8 @@ async def get_settings():
         # Resolved (clamped) retrieval knobs actually in force — lets the UI
         # show the effective values even if settings.json holds a raw/odd one.
         "retrieval_effective": config.retrieval_params(),
+        # Resolved prompt-size budget actually in force.
+        "prompt_budget": config.prompt_budget(),
     }
 
 
@@ -306,6 +308,11 @@ class SettingsUpdate(BaseModel):
     embedding_model: Optional[str] = None
     rerank: Optional[str] = None          # auto | on | off  (cross-encoder reranking)
     ocr: Optional[str] = None             # auto | on | off  (scanned-PDF / image OCR)
+    llm_fallback: Optional[bool] = None   # auto-retry with another configured provider
+    # Prompt-size budget (clamped server-side in prompt_budget) — keeps requests
+    # under a provider's tokens-per-minute limit.
+    history_turns: Optional[int] = None
+    context_chars: Optional[int] = None
     # Retrieval tuning (all optional; clamped server-side in retrieval_params)
     top_k: Optional[int] = None
     fetch_k: Optional[int] = None

@@ -389,6 +389,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "rerank": "auto",               # auto | on | off  (auto = follow profile)
     "ocr": "auto",                  # auto | on | off  (auto = follow profile; off on Lite)
     "llm_fallback": True,           # auto-retry with another configured provider if the chosen LLM fails
+    # Prompt-size budget — caps how big each LLM request can get, so a long chat
+    # or a big index can't blow past a provider's tokens-per-minute limit (Groq's
+    # free tier is only 6,000 TPM). history_turns trims the conversation re-sent
+    # each turn to a sliding window; context_chars caps the retrieved text.
+    "history_turns": 3,             # prior user/ai exchanges re-sent to the LLM (0 = none)
+    "context_chars": 6000,          # max characters of retrieved context per request (~1.5k tokens)
     # Retrieval tuning — defaults mirror the long-standing hardcoded values, so
     # behavior is unchanged until a user deliberately tweaks them. All clamped
     # to safe ranges in retrieval_params() so a bad value can't break chat.
@@ -410,6 +416,12 @@ _RETRIEVAL_BOUNDS: dict[str, tuple] = {
     "bm25_k": (0, 20),
     "final_k": (1, 20),
     "rerank_candidates": (1, 50),
+}
+
+# Bounds for the prompt-size budget knobs.
+_PROMPT_BOUNDS: dict[str, tuple] = {
+    "history_turns": (0, 20),       # 0 = send no history; 20 = effectively unlimited
+    "context_chars": (500, 60000),  # ~125 to ~15k tokens of context
 }
 
 
@@ -436,6 +448,38 @@ def retrieval_params() -> dict[str, Any]:
         "bm25_k": _num("bm25_k", False),
         "final_k": _num("final_k", False),
         "rerank_candidates": _num("rerank_candidates", False),
+    }
+
+
+def prompt_budget() -> dict[str, int]:
+    """
+    Resolve the prompt-size budget from settings, clamped to safe ranges.
+
+    Returns:
+      - history_turns:    how many prior user/ai exchanges to re-send (0 = none)
+      - history_messages: that figure as a raw message count (turns * 2)
+      - context_chars:    max characters of retrieved context per request
+
+    These cap each request so a long conversation or a large index can't push a
+    single call past a provider's tokens-per-minute limit (the 413 "Request too
+    large" error on Groq's 6,000 TPM free tier).
+    """
+    s = get_settings()
+
+    def _int(key: str) -> int:
+        lo, hi = _PROMPT_BOUNDS[key]
+        default = DEFAULT_SETTINGS[key]
+        try:
+            val = int(s.get(key, default))
+        except (TypeError, ValueError):
+            val = default
+        return max(lo, min(hi, val))
+
+    turns = _int("history_turns")
+    return {
+        "history_turns": turns,
+        "history_messages": turns * 2,   # each turn = one user + one ai message
+        "context_chars": _int("context_chars"),
     }
 
 

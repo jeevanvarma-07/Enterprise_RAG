@@ -311,8 +311,16 @@ class RAGPipeline:
                 f"was generated with {self._label(prov, model)}."
             )
 
-        # 1. Deserialize history
+        # Prompt-size budget: cap history + context so a single request can't
+        # exceed the provider's tokens-per-minute limit (the 413 on Groq's free
+        # tier). See config.prompt_budget().
+        budget = config.prompt_budget()
+
+        # 1. Deserialize history, then trim to the configured sliding window so
+        #    a long conversation isn't re-sent in full on every turn.
         history_messages = self._deserialize_history(chat_history or [])
+        cap = budget["history_messages"]
+        history_messages = history_messages[-cap:] if cap else []
 
         # 2. History-aware query condensation
         search_query = self._rephrase_query_for_history(llm, query, history_messages)
@@ -359,15 +367,21 @@ class RAGPipeline:
         #    and PREPEND those rows to the context so the LLM sees them first.
         exact_match_text = _scan_uploads_for_exact_match(query)
         faiss_context = "\n\n---\n\n".join(d.page_content for d in fused_docs)
+
+        # Trim the retrieved context to the configured character budget. The
+        # exact-match rows are the precise hit, so they're kept in full and only
+        # the semantic context is trimmed to fit what's left.
+        ctx_budget = budget["context_chars"]
         if exact_match_text:
+            remaining = max(500, ctx_budget - len(exact_match_text))
             context_text = (
                 "=== EXACT MATCH (direct record lookup) ===\n"
                 + exact_match_text
                 + "\n\n=== ADDITIONAL CONTEXT (semantic search) ===\n"
-                + faiss_context
+                + faiss_context[:remaining]
             )
         else:
-            context_text = faiss_context
+            context_text = faiss_context[:ctx_budget]
 
         messages = (
             [SystemMessage(content=SYSTEM_PROMPT.format(context=context_text))]

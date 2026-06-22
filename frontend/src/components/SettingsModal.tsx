@@ -20,10 +20,15 @@ interface Settings {
   bm25_k?: number;
   final_k?: number;
   rerank_candidates?: number;
+  // Prompt-size budget (caps each request to stay under a provider's TPM limit).
+  history_turns?: number;
+  context_chars?: number;
 }
 
-// Tunable retrieval knobs (ranges mirror the server-side clamps in config.py).
-type TuneKey = 'top_k' | 'fetch_k' | 'mmr_lambda' | 'bm25_k' | 'final_k' | 'rerank_candidates';
+// Tunable knobs (ranges mirror the server-side clamps in config.py).
+type TuneKey =
+  | 'top_k' | 'fetch_k' | 'mmr_lambda' | 'bm25_k' | 'final_k' | 'rerank_candidates'
+  | 'history_turns' | 'context_chars';
 const TUNERS: { key: TuneKey; label: string; min: number; max: number; step: number; hint: string }[] = [
   { key: 'top_k', label: 'Dense hits (k)', min: 1, max: 20, step: 1, hint: 'MMR results kept per query variation.' },
   { key: 'fetch_k', label: 'MMR pool (fetch_k)', min: 1, max: 80, step: 1, hint: 'Candidates weighed before diversity pruning.' },
@@ -32,8 +37,15 @@ const TUNERS: { key: TuneKey; label: string; min: number; max: number; step: num
   { key: 'final_k', label: 'Chunks sent to LLM', min: 1, max: 20, step: 1, hint: 'Final context chunks per answer.' },
   { key: 'rerank_candidates', label: 'Rerank candidates', min: 1, max: 50, step: 1, hint: 'Fused chunks fed to the reranker.' },
 ];
+// Request-size budget — the knobs that keep a request under the provider's
+// tokens-per-minute limit (Groq free tier = 6,000 TPM → the 413 error).
+const PROMPT_TUNERS: { key: TuneKey; label: string; min: number; max: number; step: number; hint: string }[] = [
+  { key: 'history_turns', label: 'Chat history sent', min: 0, max: 20, step: 1, hint: 'Prior Q&A turns re-sent each message. Lower = smaller requests. 0 = none.' },
+  { key: 'context_chars', label: 'Context size (chars)', min: 500, max: 60000, step: 500, hint: 'Max retrieved text per request. ~4 chars ≈ 1 token. Lower to avoid rate limits.' },
+];
 const TUNE_DEFAULTS: Record<TuneKey, number> = {
   top_k: 5, fetch_k: 20, mmr_lambda: 0.6, bm25_k: 8, final_k: 6, rerank_candidates: 12,
+  history_turns: 3, context_chars: 6000,
 };
 
 // Embedding backends. `sentence-transformers` is the default (accurate, but pulls
@@ -362,6 +374,42 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
               </p>
             </section>
 
+            {/* Request size / token budget — caps each LLM request so a long
+                chat or big index can't blow past a provider's TPM limit. */}
+            <section>
+              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Gauge className="w-3.5 h-3.5 text-slate-400" /> Request Size
+              </h3>
+              <p className="text-[11px] text-slate-500 leading-snug mb-3">
+                Smaller requests avoid the <span className="text-amber-300">“Request too large” (413)</span> rate-limit
+                error on free tiers like Groq (6,000 tokens/min). Lower these if you hit it.
+              </p>
+              <div className="space-y-3.5">
+                {PROMPT_TUNERS.map((t) => {
+                  const val = tuneValue(t.key);
+                  return (
+                    <div key={t.key}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-slate-300">{t.label}</span>
+                        <span className="text-[11px] font-mono text-blue-300 bg-slate-800 rounded px-1.5 py-0.5">
+                          {t.key === 'history_turns' && val === 0 ? 'off' : val}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={t.min} max={t.max} step={t.step} value={val}
+                        onChange={(e) => setDraft(prev => ({ ...prev, [t.key]: Number(e.target.value) }))}
+                        onPointerUp={(e) => commitTune(t.key, Number((e.target as HTMLInputElement).value))}
+                        onKeyUp={(e) => commitTune(t.key, Number((e.target as HTMLInputElement).value))}
+                        className="w-full accent-blue-500 cursor-pointer"
+                      />
+                      <p className="text-[10px] text-slate-500 leading-snug mt-0.5">{t.hint}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
             {/* Retrieval tuning (advanced) */}
             <section>
               <button
@@ -468,14 +516,43 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
                       </div>
                       {p.configured ? (
                         <span className="flex items-center gap-1 text-[10px] text-green-300 shrink-0">
-                          <CheckCircle2 className="w-3 h-3" /> {p.needs_key ? (p.has_stored_key ? 'Key saved' : 'Configured') : 'Local'}
+                          <CheckCircle2 className="w-3 h-3" /> {p.needs_key ? (p.has_stored_key ? 'Key saved' : 'Configured') : (p.type === 'ollama' ? 'Running' : 'Local')}
                         </span>
                       ) : (
                         <span className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
-                          <KeyRound className="w-3 h-3" /> Needs key
+                          {p.needs_key
+                            ? <><KeyRound className="w-3 h-3" /> Needs key</>
+                            : <><span className="w-2 h-2 rounded-full bg-slate-600 inline-block" /> {p.type === 'ollama' ? 'Not running' : 'Unavailable'}</>}
                         </span>
                       )}
                     </div>
+
+                    {/* Ollama: free local models, no key. Show how to connect it. */}
+                    {p.type === 'ollama' && (
+                      <div className="mt-2 text-[11px] leading-snug">
+                        {p.configured ? (
+                          <p className="text-green-300/90 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3 h-3 shrink-0" />
+                            {p.model_count} local model{p.model_count !== 1 ? 's' : ''} detected — pick one in the model menu (top bar). No rate limits.
+                          </p>
+                        ) : (
+                          <div className="text-slate-500 space-y-1">
+                            <p>Run unlimited models locally, fully offline — no API key, no token limits.</p>
+                            <ol className="list-decimal list-inside space-y-0.5 text-slate-400">
+                              <li>Install from <span className="text-blue-300">ollama.com</span></li>
+                              <li>Run <code className="bg-slate-900/70 px-1 rounded text-[10px]">ollama pull llama3.2</code> in a terminal</li>
+                              <li>Click <span className="text-slate-300">Refresh</span> below — the model appears in the menu</li>
+                            </ol>
+                            <button
+                              onClick={load}
+                              className="mt-1 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-slate-700/60 hover:bg-slate-700 text-slate-300"
+                            >
+                              <RefreshCw className="w-3 h-3" /> Refresh
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Key entry — only for providers that take an API key */}
                     {p.needs_key && keyStorageOk && (
