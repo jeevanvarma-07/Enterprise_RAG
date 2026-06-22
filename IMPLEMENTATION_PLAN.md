@@ -270,8 +270,11 @@ deferred OCR/llama.cpp native bundling.
 - [~] **Robust error handling:** chat surfaces server error detail (not a generic "port 8000"
       message) and distinguishes network vs server failures; missing-key errors point to
       Settings → LLM Providers (not the dev-only `.env`); empty-index/no-results return friendly
-      guidance; OCR/offline deps fail soft. (Done 2026-06-22.) *Remaining: a sweep of the
-      upload/download/rebuild paths.*
+      guidance; OCR/offline deps fail soft. **Prompt-size budget** (`config.prompt_budget`,
+      Settings → *Request Size*) caps re-sent history (`history_turns`) and retrieved context
+      (`context_chars`) so a long chat or big index can't trip a provider's tokens-per-minute
+      limit (Groq free tier = 6,000 TPM → the 413 "Request too large"). (Done 2026-06-22.)
+      *Remaining: a sweep of the upload/download/rebuild paths.*
 - [x] **Privacy posture:** ✅ Stated in the first-run wizard and the in-app Help panel —
       documents/index/history stay local; only the chosen cloud LLM prompt leaves; offline mode
       sends nothing. Done 2026-06-22.
