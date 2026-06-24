@@ -14,9 +14,14 @@ does (via git).** Update + commit it at the END of every working session.
 
 ## Current state (updated 2026-06-24)
 
-Last commit: `dc2c263` — multilingual embeddings + PDF table parsing + live model
-picker + Cerebras model-ID fix. Pushed to `origin/main`. Working tree clean.
-All 101 backend tests pass; frontend `tsc -b` clean.
+Default LLM is now **Cerebras GPT-OSS 120B** (was Groq `llama-3.1-8b-instant`) —
+`config.DEFAULT_PROVIDER`/`DEFAULT_MODEL` + `DEFAULT_SETTINGS`. Roomier free tier
+sidesteps Groq's 6k-TPM 413. Only changes the shipped default / fresh installs; a
+machine with a persisted `settings.json` keeps its own picked model. All backend
+tests pass. Pushed to `origin/main`, working tree clean.
+
+Prior commit: `dc2c263` — multilingual embeddings + PDF table parsing + live model
+picker + Cerebras model-ID fix.
 
 **What we're doing:** wiring the multi-provider LLM picker for the college demo —
 pick a model in the top bar, paste a free per-provider API key in Settings, working
@@ -28,8 +33,8 @@ live (no refresh). Author collecting free API keys.
    `zai-glm-4.7`; both reasoning models.)
 2. As more free keys are obtained (have Gemini + Cerebras), report the exact model
    IDs and check/add them to `backend/config.py` `PROVIDERS`.
-3. **Open decision:** make Cerebras GPT-OSS the *default* model (roomier free tier)
-   instead of Groq `llama-3.1-8b-instant`? — undecided.
+3. ~~Open decision: make Cerebras GPT-OSS the default model?~~ ✅ **Done** — Cerebras
+   GPT-OSS 120B is now the shipped default.
 4. Bigger plan items still open: offline LLM (llama.cpp + GGUF download, Phase 1);
    Phase 3 laptop profiling; Phase 5 branding/licensing.
 

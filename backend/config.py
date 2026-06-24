@@ -234,8 +234,13 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     },
 }
 
-DEFAULT_PROVIDER: str = "groq"
-DEFAULT_MODEL: str = "llama-3.1-8b-instant"
+# Default provider/model. Cerebras GPT-OSS 120B is the default because its free
+# tier is far roomier than Groq's 6k tokens/min (which throws 413 "Request too
+# large" on this pipeline's multi-call prompts). On a machine with no Cerebras
+# key the picker still shows this as the default but marks it unavailable, and
+# `llm_fallback` retries another configured provider — same behaviour Groq had.
+DEFAULT_PROVIDER: str = "cerebras"
+DEFAULT_MODEL: str = "gpt-oss-120b"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -542,7 +547,7 @@ def list_providers() -> list[dict[str, Any]]:
 DEFAULT_SETTINGS: dict[str, Any] = {
     "onboarded": False,             # has the first-run welcome wizard been completed?
     "mode": "lite",                 # lite | balanced | power  (drives Phase 3 profiles)
-    "active_provider": "groq",
+    "active_provider": DEFAULT_PROVIDER,
     "active_model": DEFAULT_MODEL,
     "embedding_backend": EMBEDDING_BACKEND,  # sentence-transformers | fastembed
     "embedding_model": EMBEDDING_MODEL,      # see EMBEDDING_MODELS (multilingual options)
