@@ -65,10 +65,20 @@ user query
 ```
 
 ### Key components
-- **Embeddings:** `all-MiniLM-L6-v2` via a pluggable backend (`services/embeddings.py`).
-  Default `sentence-transformers` (pulls `torch` ~2 GB); torch-free `fastembed` (ONNX) is now
-  selectable in Settings → Embeddings (and via the `embedding_backend` setting). Switching
-  backends needs a re-index — `POST /api/index/rebuild` (atomic; preserves text + citations).
+- **Embeddings:** pluggable backend (`services/embeddings.py`). Default backend
+  `sentence-transformers` (pulls `torch` ~2 GB); torch-free `fastembed` (ONNX) is selectable in
+  Settings → Embeddings (or the `embedding_backend` setting). **Model is also selectable**
+  (`config.EMBEDDING_MODELS`, surfaced at `GET /api/embeddings/models`): English `all-MiniLM-L6-v2`
+  or torch-free multilingual models that cover **Tamil + 50 langs** — `paraphrase-multilingual-
+  MiniLM-L12-v2` (384d, recommended/Lite default), `-mpnet-base-v2` (768d), `intfloat/multilingual-
+  e5-large` (1024d, Power; auto-prefixed `query:`/`passage:`). Switching backend *or* model needs
+  a re-index — `POST /api/index/rebuild` (atomic; preserves text + citations; warns on signature
+  mismatch via `embedding_info.json`).
+- **PDF table parsing:** `services/table_extraction.py` extracts tables *as tables* (labelled
+  `Col: val | …` rows, tagged `content_type:"table"`) so table questions retrieve well. Engine via
+  `config.table_engine()` (`auto|pdfplumber|docling|off`): **`pdfplumber`** is the pure-Python,
+  no-torch, Lite/3.9-safe default; **Docling** (TableFormer) is a Power-mode opt-in that auto-skips
+  on Python <3.10 / no torch. Fully defensive — degrades to plain PyPDF2 text, never breaks uploads.
 - **Vector store:** FAISS (CPU). `delete_by_source` rebuilds the whole index (O(n)).
 - **LLM:** Groq only, via `langchain-groq`. To be abstracted behind a provider layer.
 - **State:** `metadata.json` for the doc registry. No DB yet (SQLite planned).
@@ -142,7 +152,7 @@ gitignored). Do not reintroduce real keys into the repo — use the in-app store
   (Electron is the fallback if Tauri/Rust tooling proves too painful.)
 - **Offline LLM without Ollama:** bundle `llama-cpp-python` + a small quantized GGUF model,
   downloaded on first enable. Also auto-detect a user's existing Ollama and use it if present.
-- **Multi-provider LLM:** a provider abstraction; most free APIs (DeepSeek, Mistral, Kimi,
+- **Multi-provider LLM:** a provider abstraction; most free APIs (NVIDIA NIM, Mistral, Kimi,
   z.ai, OpenRouter) are OpenAI-compatible, so a single OpenAI-compatible client + per-provider
   config covers them; Gemini and local get their own adapters.
 - **State DB:** SQLite (drop the unused Postgres config).

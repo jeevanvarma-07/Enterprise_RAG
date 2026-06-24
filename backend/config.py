@@ -128,13 +128,20 @@ PROVIDERS: dict[str, dict[str, Any]] = {
             {"id": "gemini-1.5-flash", "label": "Gemini 1.5 Flash"},
         ],
     },
-    "deepseek": {
-        "label": "DeepSeek",
+    "nvidia": {
+        # NVIDIA NIM (build.nvidia.com) — genuinely free, OpenAI-compatible.
+        # Sign up for the NVIDIA Developer Program, generate an "nvapi-…" key,
+        # and call the same /v1/chat/completions endpoint. 1k inference credits
+        # on signup (5k on request), 40 req/min, no card, no GPU required.
+        # Replaces DeepSeek's direct API, which has no free tier (402 / no
+        # balance) — NVIDIA hosts Llama/Qwen/DeepSeek/etc. for free instead.
+        "label": "NVIDIA NIM",
         "type": "openai",
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "api_key_env": "NVIDIA_API_KEY",
         "models": [
-            {"id": "deepseek-chat", "label": "DeepSeek Chat"},
+            {"id": "meta/llama-3.1-8b-instruct", "label": "Llama 3.1 8B (fast)"},
+            {"id": "meta/llama-3.3-70b-instruct", "label": "Llama 3.3 70B (quality)"},
         ],
     },
     "mistral": {
@@ -170,13 +177,21 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         # Wafer-scale inference — very fast, 1M tokens/day free tier. A strong
         # backup for the laptop demo: far roomier than Groq's 6k/min, so the
         # "Request too large" 413 is much less likely.
+        #
+        # NOTE: Cerebras's free tier rotated its catalogue off the Llama models —
+        # current free accounts get GPT-OSS 120B and GLM-4.7 (both *reasoning*
+        # models: they spend tokens "thinking" before the answer, which the
+        # 2048-token default in providers.build_chat_model comfortably covers).
+        # The exact list is per-account; verify with `GET /v1/models` (it needs a
+        # browser User-Agent — the API sits behind Cloudflare, which 1010-blocks
+        # the default Python UA, though langchain's httpx client gets through).
         "label": "Cerebras",
         "type": "openai",
         "base_url": "https://api.cerebras.ai/v1",
         "api_key_env": "CEREBRAS_API_KEY",
         "models": [
-            {"id": "llama-3.3-70b", "label": "Llama 3.3 70B (quality)"},
-            {"id": "llama3.1-8b", "label": "Llama 3.1 8B (fast)"},
+            {"id": "gpt-oss-120b", "label": "GPT-OSS 120B (quality)"},
+            {"id": "zai-glm-4.7", "label": "GLM 4.7 (reasoning)"},
         ],
     },
     "openrouter": {
@@ -240,6 +255,86 @@ DEFAULT_MODEL: str = "llama-3.1-8b-instant"
 EMBEDDING_BACKEND: str = os.getenv("RAG_EMBEDDING_BACKEND", "sentence-transformers")
 EMBEDDING_MODEL: str = os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
+
+# ─────────────────────────────────────────────────────────────────────
+# Embedding model registry  (single source of truth for the picker + provider)
+#
+# The default `all-MiniLM-L6-v2` is English-only, so Tamil / other non-English
+# documents retrieve poorly. These multilingual models fix that WITHOUT touching
+# the Lite-first rule: every one is available through `fastembed` (ONNX, no
+# torch), so the 8 GB / no-GPU laptop can run them. They differ in vector size
+# and weight, so picking a heavier one is a quality/RAM trade-off the user makes
+# per machine (the smallest is the Lite default; the 3060 desktop can opt up).
+#
+# IMPORTANT: switching the model invalidates an existing index (vectors from
+# different models aren't comparable) — the user must hit "Rebuild index". That
+# migration path already exists (`VectorStoreManager.rebuild_embeddings`), and
+# the `embedding_info.json` signature stamp warns on a mismatch. So nothing here
+# auto-switches; it only widens the menu of selectable models.
+#
+# `model` is our short id (stored in settings + the index signature). `fastembed`
+# names map to the fully-qualified ids in services/embeddings._fastembed_name().
+# ─────────────────────────────────────────────────────────────────────
+EMBEDDING_MODELS: list[dict[str, Any]] = [
+    {
+        "id": "all-MiniLM-L6-v2",
+        "label": "English (MiniLM-L6)",
+        "languages": "English",
+        "dim": 384,
+        "size_gb": 0.09,
+        "multilingual": False,
+        "tier": "lite",
+        "note": "Smallest & fastest. English-only — the original default.",
+    },
+    {
+        "id": "paraphrase-multilingual-MiniLM-L12-v2",
+        "label": "Multilingual (MiniLM-L12)",
+        "languages": "50+ languages incl. Tamil",
+        "dim": 384,
+        "size_gb": 0.22,
+        "multilingual": True,
+        "tier": "lite",
+        "note": "Recommended. Same 384-dim size class as English MiniLM, "
+                "covers Tamil + 50 languages. Best fit for the 8 GB laptop.",
+    },
+    {
+        "id": "paraphrase-multilingual-mpnet-base-v2",
+        "label": "Multilingual HQ (mpnet)",
+        "languages": "50+ languages incl. Tamil",
+        "dim": 768,
+        "size_gb": 1.0,
+        "multilingual": True,
+        "tier": "balanced",
+        "note": "Higher-quality multilingual retrieval. 768-dim — more RAM/CPU "
+                "than MiniLM; good on the desktop or a roomy machine.",
+    },
+    {
+        "id": "intfloat/multilingual-e5-large",
+        "label": "Multilingual Max (e5-large)",
+        "languages": "100+ languages incl. Tamil",
+        "dim": 1024,
+        "size_gb": 2.24,
+        "multilingual": True,
+        "tier": "power",
+        "note": "Best quality, 1024-dim, ~2.2 GB. Power machines only "
+                "(RTX 3060 / 16 GB) — too heavy for the Lite laptop.",
+    },
+]
+
+# Models that need an e5-style "query:"/"passage:" prefix to embed well. The
+# embeddings backend prepends these automatically (see services/embeddings.py).
+E5_PREFIX_MODELS: set[str] = {"intfloat/multilingual-e5-large"}
+
+
+def list_embedding_models() -> list[dict[str, Any]]:
+    """
+    The selectable embedding models for the Settings picker, each tagged with
+    whether it is the one currently active. The UI shares this single registry
+    (via GET /api/embeddings/models) so the menu and the backend never drift.
+    """
+    active = str(get_settings().get("embedding_model", EMBEDDING_MODEL))
+    return [{**m, "active": m["id"] == active} for m in EMBEDDING_MODELS]
+
 RERANK_MODEL: str = os.getenv("RAG_RERANK_MODEL", "ms-marco-MiniLM-L-12-v2")
 RERANK_CANDIDATES: int = int(os.getenv("RAG_RERANK_CANDIDATES", "12"))  # fused chunks fed to the reranker
 RERANK_TOP_N: int = int(os.getenv("RAG_RERANK_TOP_N", "6"))             # chunks kept after reranking
@@ -269,6 +364,10 @@ MODE_PROFILES: dict[str, dict[str, Any]] = {
         "ocr": False,
         "upload_concurrency": 3,
         "embedding": "fastembed",
+        # Suggested (advisory) embedding model + table engine for this profile.
+        # Never auto-applied — see EMBEDDING_MODELS / table_engine() notes.
+        "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+        "table_engine": "pdfplumber",
     },
     "balanced": {
         "label": "Balanced",
@@ -278,6 +377,8 @@ MODE_PROFILES: dict[str, dict[str, Any]] = {
         "ocr": True,
         "upload_concurrency": 6,
         "embedding": "fastembed",
+        "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+        "table_engine": "pdfplumber",
     },
     "power": {
         "label": "Power",
@@ -287,6 +388,8 @@ MODE_PROFILES: dict[str, dict[str, Any]] = {
         "ocr": True,
         "upload_concurrency": 12,
         "embedding": "sentence-transformers",
+        "embedding_model": "paraphrase-multilingual-mpnet-base-v2",
+        "table_engine": "docling",
     },
 }
 
@@ -317,6 +420,28 @@ def ocr_enabled() -> bool:
 def upload_concurrency() -> int:
     """How many files to ingest concurrently under the active profile."""
     return int(MODE_PROFILES[active_mode()]["upload_concurrency"])
+
+
+def table_engine() -> str:
+    """
+    Which engine extracts structured tables from PDFs.
+
+    Returns one of: "pdfplumber" (pure-Python, no torch, Lite-safe — the
+    default), "docling" (high-quality but needs Python ≥3.10 + torch, so it's a
+    Power-mode opt-in), or "off" (no dedicated table extraction).
+
+    The `table_engine` setting honors an explicit choice; "auto" (default)
+    follows the active profile — pdfplumber on Lite/Balanced, docling on Power.
+    Availability is checked at call time in services/table_extraction.py, which
+    silently falls back to pdfplumber → plain text if the chosen engine isn't
+    installed, so the laptop and the 3.9 CI never break.
+    """
+    pref = str(get_settings().get("table_engine", "auto")).lower()
+    if pref in ("off", "none", "false", "0", "no"):
+        return "off"
+    if pref in ("pdfplumber", "docling"):
+        return pref
+    return str(MODE_PROFILES[active_mode()].get("table_engine", "pdfplumber"))
 
 
 def get_provider(name: str) -> dict[str, Any]:
@@ -420,9 +545,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "active_provider": "groq",
     "active_model": DEFAULT_MODEL,
     "embedding_backend": EMBEDDING_BACKEND,  # sentence-transformers | fastembed
-    "embedding_model": EMBEDDING_MODEL,
+    "embedding_model": EMBEDDING_MODEL,      # see EMBEDDING_MODELS (multilingual options)
     "rerank": "auto",               # auto | on | off  (auto = follow profile)
     "ocr": "auto",                  # auto | on | off  (auto = follow profile; off on Lite)
+    "table_engine": "auto",         # auto | pdfplumber | docling | off  (see table_engine())
     "llm_fallback": True,           # auto-retry with another configured provider if the chosen LLM fails
     # Prompt-size budget — caps how big each LLM request can get, so a long chat
     # or a big index can't blow past a provider's tokens-per-minute limit (Groq's

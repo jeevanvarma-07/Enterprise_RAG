@@ -8,6 +8,10 @@ interface Settings {
   mode: string;
   rerank: string;
   ocr?: string;
+  table_engine?: string;            // auto | pdfplumber | docling | off
+  table_engine_effective?: string;  // resolved engine actually in force
+  pdfplumber_available?: boolean;
+  docling_available?: boolean;
   active_provider?: string;
   active_model?: string;
   embedding_backend?: string;
@@ -56,6 +60,29 @@ const EMBEDDING_BACKENDS = [
   { id: 'fastembed', label: 'Light (ONNX)', hint: 'No torch — best for Lite.' },
 ];
 
+// One selectable embedding model (from GET /api/embeddings/models — shares the
+// backend registry in config.py so the menu never drifts from what's supported).
+interface EmbeddingModel {
+  id: string;
+  label: string;
+  languages: string;
+  dim: number;
+  size_gb: number;
+  multilingual: boolean;
+  tier: string;       // lite | balanced | power
+  note: string;
+  active: boolean;
+}
+
+// PDF table-parsing engines (mirrors config.table_engine()). docling is a
+// Power-mode opt-in; the option is disabled in the UI when it isn't installed.
+const TABLE_ENGINES = [
+  { id: 'auto', label: 'Auto', hint: 'Follow performance mode.' },
+  { id: 'pdfplumber', label: 'Light', hint: 'Pure-Python. Lite-safe.' },
+  { id: 'docling', label: 'High-quality', hint: 'Docling (Power, Python 3.10+).' },
+  { id: 'off', label: 'Off', hint: 'No table extraction.' },
+];
+
 interface ProviderInfo {
   name: string;
   label: string;
@@ -102,7 +129,7 @@ const MODES = [
  * and a read-only provider configuration overview. Persists to /api/settings.
  * Rendered in a portal so it overlays the whole app.
  */
-export default function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function SettingsModal({ open, onClose, onConfigChange }: { open: boolean; onClose: () => void; onConfigChange?: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [system, setSystem] = useState<SystemInfo | null>(null);
@@ -118,6 +145,7 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
   const [tuneOpen, setTuneOpen] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState<string | null>(null);
+  const [embModels, setEmbModels] = useState<EmbeddingModel[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -127,6 +155,13 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
       setKeyStorageOk(p.data.key_storage_available !== false);
     } catch {
       /* backend offline — modal shows nothing actionable */
+    }
+    // Embedding model menu is best-effort and independent of the rest.
+    try {
+      const m = await api.get('/api/embeddings/models');
+      setEmbModels(m.data.models || []);
+    } catch {
+      setEmbModels([]);
     }
     // Hardware detection is best-effort and independent — never block settings.
     try {
@@ -164,6 +199,9 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
       await api.post(`/api/providers/${name}/key`, { api_key: value });
       setKeyDrafts(prev => { const next = { ...prev }; delete next[name]; return next; });
       await load();
+      // Tell the app a provider's config changed so the top-bar model picker and
+      // the "needs key" banner update live — no refresh/reopen required.
+      onConfigChange?.();
     } catch {
       /* leave the draft so the user can retry */
     } finally {
@@ -177,6 +215,9 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
     try {
       await api.delete(`/api/providers/${name}/key`);
       await load();
+      // Removing a key can make a provider's models unavailable — refresh the
+      // picker/banner live too.
+      onConfigChange?.();
     } catch {
       /* no-op */
     } finally {
@@ -485,6 +526,35 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
                   );
                 })}
               </div>
+
+              {/* Model picker — English vs multilingual (Tamil + 50 langs). All
+                  multilingual options are torch-free via fastembed, so picking
+                  one also switches the backend to Light (ONNX). */}
+              {embModels.length > 0 && (
+                <div className="mb-2">
+                  <label className="block text-[11px] text-slate-400 mb-1">Model (language coverage)</label>
+                  <select
+                    value={settings?.embedding_model || 'all-MiniLM-L6-v2'}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      const m = embModels.find((x) => x.id === id);
+                      patch(m?.multilingual ? { embedding_model: id, embedding_backend: 'fastembed' } : { embedding_model: id });
+                    }}
+                    className="w-full py-2 px-2 rounded-lg text-xs bg-slate-800/60 border border-white/10 text-slate-200 focus:outline-none focus:border-blue-500/40"
+                  >
+                    {embModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label} · {m.languages} · {m.dim}d{m.tier === 'power' ? ' · Power (large)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {(() => {
+                    const cur = embModels.find((m) => m.id === (settings?.embedding_model || 'all-MiniLM-L6-v2'));
+                    return cur ? <p className="text-[10px] text-slate-500 leading-snug mt-1">{cur.note}</p> : null;
+                  })()}
+                </div>
+              )}
+
               <button
                 onClick={rebuildIndex}
                 disabled={rebuilding}
@@ -498,8 +568,41 @@ export default function SettingsModal({ open, onClose }: { open: boolean; onClos
                 <p className="text-[11px] text-slate-400 leading-snug mt-2">{rebuildMsg}</p>
               )}
               <p className="text-[11px] text-slate-500 leading-snug mt-2">
-                After switching backend you must <span className="text-slate-400">rebuild</span> — vectors from different
-                models aren't comparable. Re-embeds every chunk; text &amp; citations are preserved.
+                After switching backend or model you must <span className="text-slate-400">rebuild</span> — vectors from
+                different models aren't comparable. Re-embeds every chunk; text &amp; citations are preserved.
+              </p>
+            </section>
+
+            {/* Table parsing */}
+            <section>
+              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Database className="w-3.5 h-3.5 text-slate-400" /> PDF table parsing
+              </h3>
+              <div className="grid grid-cols-4 gap-2">
+                {TABLE_ENGINES.map((t) => {
+                  const active = (settings?.table_engine || 'auto') === t.id;
+                  const doclingDisabled = t.id === 'docling' && settings?.docling_available === false;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => !doclingDisabled && patch({ table_engine: t.id })}
+                      disabled={doclingDisabled}
+                      title={doclingDisabled ? 'Docling not installed (needs Python 3.10+ and torch)' : t.hint}
+                      className={`py-2 px-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        active ? 'bg-blue-500/15 border-blue-500/40 text-blue-200' : 'bg-slate-800/40 border-white/5 text-slate-400 hover:bg-slate-800/80'
+                      } ${doclingDisabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    >
+                      <span className="block">{t.label}</span>
+                      <span className="block text-[10px] font-normal text-slate-500 mt-0.5">{t.hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-500 leading-snug mt-2">
+                Extracts PDF tables as clean rows so table questions retrieve well. Active:{' '}
+                <span className="text-slate-400">{settings?.table_engine_effective || 'pdfplumber'}</span>.
+                {settings?.docling_available === false && ' Docling is a Power-mode extra (Python 3.10+).'}
+                {' '}Applies to newly uploaded PDFs.
               </p>
             </section>
 

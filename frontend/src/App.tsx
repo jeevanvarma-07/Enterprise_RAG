@@ -131,28 +131,46 @@ function App() {
       .catch(() => { /* backend offline — don't trap the user behind a wizard */ });
   }, []);
 
-  // Load the available models from the backend registry (single source of truth)
-  useEffect(() => {
-    api.get('/api/models')
-      .then(res => {
-        const list: ModelOption[] = res.data.models || [];
-        setModels(list);
-        // Prefer a usable (configured) model: keep the current one only if it's
-        // still offered AND available; otherwise fall back to the backend default
-        // or the first available model.
-        const current = list.find(m => m.id === model);
-        if (!current || current.available === false) {
-          const firstAvailable = list.find(m => m.available !== false);
-          setModel(res.data.default || firstAvailable?.id || (list[0]?.id ?? model));
-        }
-      })
-      .catch(() => { /* backend offline — keep the default option below */ });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Load the available models from the backend registry (single source of truth).
+  // Re-runnable: called once on mount AND whenever a provider key is added/removed
+  // in Settings, so the model picker enables the newly-configured provider's
+  // models live — no page refresh needed.
+  const loadModels = useCallback(async () => {
+    try {
+      const res = await api.get('/api/models');
+      const list: ModelOption[] = res.data.models || [];
+      setModels(list);
+      // Prefer a usable (configured) model: keep the current one only if it's
+      // still offered AND available; otherwise fall back to the backend default
+      // or the first available model. Functional update so we don't depend on
+      // `model` (which would re-create this callback every keystroke).
+      setModel(prev => {
+        const current = list.find(m => m.id === prev);
+        if (current && current.available !== false) return prev;
+        const firstAvailable = list.find(m => m.available !== false);
+        return res.data.default || firstAvailable?.id || (list[0]?.id ?? prev);
+      });
+    } catch {
+      /* backend offline — keep the default option below */
+    }
   }, []);
+
+  useEffect(() => { loadModels(); }, [loadModels]);
 
   // The provider that owns the selected model (sent with chat so the backend
   // knows which client + key to use; falls back to backend resolution if absent).
   const selectedProvider = models.find(m => m.id === model)?.provider;
+
+  // Switch the active model and persist the choice so it survives restarts.
+  // The backend stores active_provider/active_model and serves them back as the
+  // /api/models default on the next load. Persistence is best-effort: the live
+  // selection still works even if the save fails (e.g. backend mid-restart).
+  const changeModel = (id: string) => {
+    setModel(id);
+    const provider = models.find(m => m.id === id)?.provider;
+    api.post('/api/settings', { active_model: id, active_provider: provider })
+      .catch(() => { /* non-fatal — selection still applies for this session */ });
+  };
 
   // Show landing on first load, workspace after enter
   if (showLanding) {
@@ -169,8 +187,11 @@ function App() {
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
       <main className="flex-1 flex flex-col h-full relative z-10 p-4 gap-4 overflow-hidden">
-        {/* Header */}
-        <header className="glass-panel rounded-2xl p-4 flex justify-between items-center shrink-0">
+        {/* Header — relative z-30 so its hover tooltips (e.g. ConnectionStatus)
+            paint above the content panels below. Without it the header's own
+            backdrop-blur stacking context sits level with the chat panel, which
+            comes later in the DOM and would cover the dropdown tooltip. */}
+        <header className="glass-panel rounded-2xl p-4 flex justify-between items-center shrink-0 relative z-30">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowLanding(true)}
@@ -191,7 +212,7 @@ function App() {
             <span className="text-sm text-slate-400">Model:</span>
             <select
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => changeModel(e.target.value)}
               className="bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-slate-200"
             >
               {models.length > 0 ? (
@@ -295,7 +316,11 @@ function App() {
         </div>
       </main>
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onConfigChange={() => { loadModels(); refreshHealth(); }}
+      />
 
       <FirstRunWizard
         open={showWizard && !showLanding}

@@ -88,9 +88,9 @@ def test_provider_is_configured_via_store(monkeypatch):
 
 def test_persists_across_reimport():
     """A fresh import of the module still reads previously stored keys."""
-    keystore.set_key("deepseek", "persisted-value")
+    keystore.set_key("nvidia", "persisted-value")
     reloaded = importlib.reload(keystore)
     try:
-        assert reloaded.get_key("deepseek") == "persisted-value"
+        assert reloaded.get_key("nvidia") == "persisted-value"
     finally:
-        reloaded.delete_key("deepseek")
+        reloaded.delete_key("nvidia")

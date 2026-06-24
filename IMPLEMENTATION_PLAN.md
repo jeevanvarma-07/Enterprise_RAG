@@ -73,7 +73,7 @@ out of the repo, settings + SQLite in place, and a single axios client.
 - [ ] **Provider abstraction.** `backend/services/providers/` with a common interface
       (`chat(messages, model, stream) -> tokens`). Adapters:
   - **OpenAI-compatible** (one adapter, many providers via base_url + key):
-    Groq, DeepSeek, Mistral, Moonshot/Kimi, z.ai, OpenRouter, OpenCode Zen, Wafer.
+    Groq, NVIDIA NIM, Mistral, Moonshot/Kimi, z.ai, OpenRouter, OpenCode Zen, Wafer.
   - **Google Gemini** (Google AI Studio) — own adapter (or its OpenAI-compat endpoint).
   - **Local llama.cpp** — `llama-cpp-python`, loads a bundled/downloaded GGUF, GPU offload
     when available.
@@ -134,6 +134,16 @@ in-app; offline chat works on the dev machine with no external services.
       get this; pre-existing indexed docs simply have no location. Sources now also carry the
       full chunk `text`; clicking a source opens a modal showing the exact retrieved context.
       Done 2026-06-21.
+- [x] **Structured table parsing.** ✅ PDFs now yield clean table chunks alongside prose.
+      `services/table_extraction.py` pulls tables out *as tables* and emits each row as a
+      labelled `Col: val | Col: val` line (same shape Excel/CSV use, which retrieval +
+      exact-lookup already handle well), tagged `{page, table, content_type:"table"}`.
+      **Default engine `pdfplumber`** (pure-Python, no torch, Python-3.9/laptop-safe);
+      optional **Docling** (TableFormer) behind a Power-mode opt-in that auto-skips on
+      Python 3.9 / when torch is absent. Selected via `config.table_engine()`
+      (`auto|pdfplumber|docling|off`); fully defensive (a missing engine or parse error
+      degrades to plain text, never breaks an upload). Settings → *PDF table parsing*
+      selector. Done 2026-06-23.
 - [x] **Chat persistence.** ✅ Sessions + history in SQLite (`services/storage.py`, stdlib
       `sqlite3`, no dep) with full session CRUD endpoints in `main.py`. Frontend
       `SessionsPanel` sidebar (browse/select/rename/delete + New chat); `ChatInterface`
@@ -193,6 +203,16 @@ stream; conversations persist across restarts.
         "Rebuild index" button that re-embeds in place. 42 backend tests pass.
       - Remaining for full Lite packaging: ship a Lite build that installs `fastembed` and NOT
         `torch` (a PyInstaller/extras decision, deferred to Phase 4 packaging).
+- [x] **Multilingual / Tamil embeddings.** ✅ The English-only `all-MiniLM-L6-v2` is no longer
+      the only option: `config.EMBEDDING_MODELS` registers four torch-free fastembed models —
+      English MiniLM-L6 (384d), **multilingual MiniLM-L12** (384d, Tamil + 50 langs,
+      *recommended/Lite default*), multilingual mpnet (768d, balanced), and `intfloat/
+      multilingual-e5-large` (1024d, Power). e5 gets its `query:`/`passage:` prefixes applied
+      automatically (`E5_PREFIX_MODELS` + `_E5PrefixEmbeddings`). All multilingual models are
+      torch-free ONNX, so the Lite laptop pays nothing. Picked in Settings → *Embeddings*
+      (shared registry via `GET /api/embeddings/models`); switching uses the existing
+      `rebuild_embeddings()` migration + `embedding_info.json` mismatch warning. Profiles
+      suggest a model (advisory, never auto-switched). Done 2026-06-23.
 - [x] **Hardware auto-detect.** ✅ `services/system_info.py` detects RAM (psutil → stdlib
       ctypes/sysconf fallback), CPU count, and GPU (`nvidia-smi`, no heavy imports) and maps
       them to a suggested profile. Exposed at `GET /api/system`; the Settings panel surfaces it
@@ -311,7 +331,7 @@ matters; if not, mobile is a thin client to a server you host.
   Antigravity. Point each tool at them at the start of a session.
 - **Work phase by phase, small commits.** Land one checklist item, verify it runs on the dev
   machine, and (for Lite-affecting changes) on the laptop, before moving on.
-- **Spread free API usage** across your providers (Groq/Gemini/DeepSeek/Mistral/Kimi/z.ai/
+- **Spread free API usage** across your providers (Groq/Gemini/NVIDIA/Mistral/Kimi/z.ai/
   OpenRouter) to stay within free limits during development.
 - **Keep secrets out of the repo and out of prompts/docs** — always.
 

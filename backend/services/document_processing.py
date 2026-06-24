@@ -33,6 +33,16 @@ try:
 except ImportError:
     PDF2IMAGE_AVAILABLE = False
 
+# Structured table extraction (pdfplumber default / docling Power opt-in). Kept
+# in its own service and imported defensively so a missing table engine leaves
+# the existing PyPDF2 text path completely unchanged.
+try:
+    from services import table_extraction
+    TABLE_EXTRACTION_AVAILABLE = True
+except Exception:  # pragma: no cover - defensive
+    table_extraction = None
+    TABLE_EXTRACTION_AVAILABLE = False
+
 
 def _ocr_ready() -> bool:
     """True only when OCR is both installed and enabled by the active profile."""
@@ -81,6 +91,11 @@ def process_document_chunks(file_path: str) -> List[Tuple[str, dict]]:
         for page_no, page_text in _extract_pdf_pages(file_path):
             for piece in chunk_text(page_text):
                 chunks.append((piece, {"page": page_no}))
+        # Also pull tables out *as tables* (clean rows with column labels) so
+        # table questions retrieve well — the flat PyPDF2 text above mangles
+        # them. Additive: prose chunks stay; table chunks are extra. Degrades to
+        # nothing if no table engine is installed (Lite without pdfplumber).
+        chunks.extend(_extract_pdf_table_chunks(file_path))
         return chunks
 
     if ext in (".xls", ".xlsx", ".csv"):
@@ -96,6 +111,20 @@ def process_document_chunks(file_path: str) -> List[Tuple[str, dict]]:
         return [(piece, {}) for piece in chunk_text(text)] if text.strip() else []
 
     raise ValueError(f"Unsupported file extension: {ext}")
+
+
+def _extract_pdf_table_chunks(file_path: str) -> List[Tuple[str, dict]]:
+    """
+    Best-effort structured-table chunks for a PDF, or [] if table extraction is
+    unavailable/disabled. Never raises — table parsing must never block an upload.
+    """
+    if not TABLE_EXTRACTION_AVAILABLE:
+        return []
+    try:
+        return table_extraction.extract_pdf_tables(file_path)
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"[WARNING] Table extraction failed for {file_path}: {e}")
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────

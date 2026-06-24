@@ -207,10 +207,23 @@ async def get_models():
                 **m,
             })
 
+    # Prefer the user's persisted choice (active_model) as the default, so the
+    # picker reopens on the last model they used across restarts. Fall back to
+    # the hardcoded default only if the saved model is no longer offered.
+    settings = config.get_settings()
+    saved_model = settings.get("active_model")
+    known_ids = {m.get("id") for m in models}
+    if saved_model in known_ids:
+        default_model = saved_model
+        default_provider = settings.get("active_provider") or config.provider_for_model(saved_model)
+    else:
+        default_model = config.DEFAULT_MODEL
+        default_provider = config.DEFAULT_PROVIDER
+
     return {
         "models": models,
-        "default": config.DEFAULT_MODEL,
-        "default_provider": config.DEFAULT_PROVIDER,
+        "default": default_model,
+        "default_provider": default_provider,
     }
 
 
@@ -237,6 +250,16 @@ async def get_providers():
         "ollama_running": ollama["running"],
         "key_storage_available": keystore.available(),
     }
+
+
+@app.get("/api/embeddings/models")
+async def get_embedding_models():
+    """
+    The selectable embedding models for the Settings picker (shares config's
+    single registry so the UI and backend never drift). Includes the multilingual
+    options (Tamil + 50 languages) and flags the one currently active.
+    """
+    return {"models": config.list_embedding_models()}
 
 
 class ProviderKey(BaseModel):
@@ -286,6 +309,7 @@ async def get_settings():
     optional reranker package is installed).
     """
     from services.reranker import is_available as rerank_available
+    from services import table_extraction
 
     return {
         **config.get_settings(),
@@ -296,6 +320,11 @@ async def get_settings():
         "retrieval_effective": config.retrieval_params(),
         # Resolved prompt-size budget actually in force.
         "prompt_budget": config.prompt_budget(),
+        # Resolved table engine + which engines are actually installed, so the UI
+        # can show the effective parser and disable the docling option on Lite.
+        "table_engine_effective": config.table_engine(),
+        "pdfplumber_available": table_extraction.PDFPLUMBER_AVAILABLE,
+        "docling_available": table_extraction._docling_importable(),
     }
 
 
@@ -308,6 +337,7 @@ class SettingsUpdate(BaseModel):
     embedding_model: Optional[str] = None
     rerank: Optional[str] = None          # auto | on | off  (cross-encoder reranking)
     ocr: Optional[str] = None             # auto | on | off  (scanned-PDF / image OCR)
+    table_engine: Optional[str] = None    # auto | pdfplumber | docling | off (PDF tables)
     llm_fallback: Optional[bool] = None   # auto-retry with another configured provider
     # Prompt-size budget (clamped server-side in prompt_budget) — keeps requests
     # under a provider's tokens-per-minute limit.

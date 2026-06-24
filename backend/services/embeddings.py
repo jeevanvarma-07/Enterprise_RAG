@@ -83,9 +83,39 @@ def signature() -> str:
 
 
 def _fastembed_name(model: str) -> str:
-    """Map our short model names to the fully-qualified names fastembed expects."""
-    mapping = {"all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2"}
+    """
+    Map our short model ids to the fully-qualified names fastembed expects.
+
+    The English MiniLM and the multilingual MiniLM/mpnet models live under the
+    `sentence-transformers/` namespace in fastembed's catalog; the e5 model is
+    already fully-qualified (`intfloat/...`) so it passes straight through.
+    """
+    mapping = {
+        "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
+        "paraphrase-multilingual-MiniLM-L12-v2":
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        "paraphrase-multilingual-mpnet-base-v2":
+            "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+    }
     return mapping.get(model, model)
+
+
+class _E5PrefixEmbeddings:
+    """
+    Thin wrapper that prepends the e5 instruction prefixes the model was trained
+    on — `query: ` for searches and `passage: ` for indexed chunks. Without them
+    e5 retrieval is noticeably worse. Wraps any LangChain Embeddings instance and
+    forwards everything else unchanged, so the rest of the app is none the wiser.
+    """
+
+    def __init__(self, inner: Any):
+        self._inner = inner
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._inner.embed_documents([f"passage: {t}" for t in texts])
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._inner.embed_query(f"query: {text}")
 
 
 def get_embeddings() -> Any:
@@ -101,7 +131,12 @@ def get_embeddings() -> Any:
 
     if backend in _FASTEMBED:
         from langchain_community.embeddings import FastEmbedEmbeddings
-        return FastEmbedEmbeddings(model_name=_fastembed_name(model))
+        emb: Any = FastEmbedEmbeddings(model_name=_fastembed_name(model))
+    else:
+        from langchain_huggingface import HuggingFaceEmbeddings
+        emb = HuggingFaceEmbeddings(model_name=model)
 
-    from langchain_huggingface import HuggingFaceEmbeddings
-    return HuggingFaceEmbeddings(model_name=model)
+    # e5 models need query:/passage: prefixes for good retrieval.
+    if model in getattr(config, "E5_PREFIX_MODELS", set()):
+        return _E5PrefixEmbeddings(emb)
+    return emb

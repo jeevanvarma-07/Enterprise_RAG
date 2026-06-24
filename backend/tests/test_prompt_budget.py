@@ -107,7 +107,7 @@ def test_prepare_trims_history_to_window(restore_settings, monkeypatch):
     monkeypatch.setattr("services.generation._scan_uploads_for_exact_match", lambda *a, **k: "")
 
     p = RAGPipeline(vector_manager=_FakeVM([_doc("some context")]))
-    llm, messages, sources, early, fallback, notice = p._prepare(
+    llm, messages, sources, early, fallback, notice, primary_label = p._prepare(
         "new question", config.DEFAULT_MODEL, "groq", _long_history(10)
     )
     assert early is None
@@ -125,7 +125,7 @@ def test_prepare_caps_context_chars(restore_settings, monkeypatch):
 
     huge = _doc("x" * 5000)
     p = RAGPipeline(vector_manager=_FakeVM([huge]))
-    llm, messages, sources, early, fallback, notice = p._prepare(
+    llm, messages, sources, early, fallback, notice, primary_label = p._prepare(
         "q", config.DEFAULT_MODEL, "groq", []
     )
     system = next(m for m in messages if isinstance(m, SystemMessage))
@@ -147,7 +147,7 @@ def test_prepare_caps_context_when_exact_match_is_huge(restore_settings, monkeyp
     )
 
     p = RAGPipeline(vector_manager=_FakeVM([_doc("y" * 5000)]))
-    llm, messages, sources, early, fallback, notice = p._prepare(
+    llm, messages, sources, early, fallback, notice, primary_label = p._prepare(
         "q", config.DEFAULT_MODEL, "groq", []
     )
     system = next(m for m in messages if isinstance(m, SystemMessage))

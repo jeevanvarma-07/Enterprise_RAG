@@ -60,6 +60,42 @@ def test_upload_concurrency_scales(restore_settings):
     assert lite >= 1 and power > lite
 
 
+# ── Table engine gating (mirrors the ocr auto/on/off contract) ───────
+
+def test_table_engine_auto_follows_profile(restore_settings):
+    config.save_settings({"table_engine": "auto", "mode": "lite"})
+    assert config.table_engine() == "pdfplumber"      # Lite: pure-Python
+    config.save_settings({"mode": "balanced"})
+    assert config.table_engine() == "pdfplumber"
+    config.save_settings({"mode": "power"})
+    assert config.table_engine() == "docling"         # Power: high-quality
+
+
+def test_table_engine_explicit_overrides_profile(restore_settings):
+    config.save_settings({"mode": "power", "table_engine": "pdfplumber"})
+    assert config.table_engine() == "pdfplumber"      # explicit beats Power
+    config.save_settings({"mode": "lite", "table_engine": "docling"})
+    assert config.table_engine() == "docling"         # explicit beats Lite
+
+
+def test_table_engine_off(restore_settings):
+    config.save_settings({"table_engine": "off"})
+    assert config.table_engine() == "off"
+    config.save_settings({"table_engine": "none"})    # synonym
+    assert config.table_engine() == "off"
+
+
+def test_profiles_carry_embedding_and_table_suggestions():
+    # The advisory model/engine hints the UI reads must exist on every profile.
+    for name, prof in config.MODE_PROFILES.items():
+        assert "embedding_model" in prof, f"{name} missing embedding_model"
+        assert "table_engine" in prof, f"{name} missing table_engine"
+        # The suggested model must be a real registered model id.
+        ids = {m["id"] for m in config.EMBEDDING_MODELS}
+        assert prof["embedding_model"] in ids
+        assert prof["table_engine"] in ("pdfplumber", "docling", "off")
+
+
 # ── Hardware detection ───────────────────────────────────────────────
 
 def test_detect_system_shape():

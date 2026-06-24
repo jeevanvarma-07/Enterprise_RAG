@@ -130,6 +130,31 @@ class RAGPipeline:
         return f"{cfg.get('label', provider)} · {model}"
 
     @staticmethod
+    def _error_reason(err: str) -> str:
+        """
+        Condense a raw provider exception into a short, user-facing reason so a
+        fallback notice can say *why* the chosen model failed (e.g. a wrong key)
+        instead of a generic "failed". Best-effort string matching — defaults to
+        a plain "error" when nothing recognisable is present.
+        """
+        e = (err or "").lower()
+        if any(s in e for s in ("401", "unauthorized", "invalid api key", "invalid_api_key",
+                                "authentication", "no api key", "incorrect api key")):
+            return "invalid or missing API key"
+        if any(s in e for s in ("402", "payment required", "insufficient balance",
+                                "insufficient_quota", "no balance", "billing")):
+            return "no account balance — this provider needs paid credit"
+        if any(s in e for s in ("429", "rate limit", "rate_limit", "quota", "tokens per minute", "tpm")):
+            return "rate limit reached"
+        if any(s in e for s in ("404", "not found", "does not exist", "decommission", "no such model")):
+            return "model not available"
+        if any(s in e for s in ("timeout", "timed out")):
+            return "request timed out"
+        if any(s in e for s in ("connection", "network", "getaddrinfo", "ssl", "unreachable")):
+            return "network error"
+        return "error"
+
+    @staticmethod
     def _join_notice(*parts: str) -> str:
         """Join the non-empty notice fragments into one space-separated string."""
         return " ".join(p for p in parts if p)
@@ -280,7 +305,7 @@ class RAGPipeline:
         Shared retrieval + prompt assembly used by BOTH the streaming and
         non-streaming paths, so the RAG logic lives in exactly one place.
 
-        Returns (llm, messages, sources, early_text, fallback, notice):
+        Returns (llm, messages, sources, early_text, fallback, notice, primary_label):
           - early_text is a ready-to-send message when there's nothing to answer
             from (no index / no relevant content); messages will be None then.
           - otherwise early_text is None and (llm, messages, sources) are ready.
@@ -288,6 +313,9 @@ class RAGPipeline:
             generation time (empty when fallback is off or `llm` is the last one).
           - notice: a user-facing note when the originally-chosen provider was
             unavailable and a fallback was selected at build time (else "").
+          - primary_label: 'Provider · model' of the model that actually built,
+            so a runtime-fallback notice can name which model failed ("" on the
+            early-return paths, where no LLM is invoked).
         May raise ValueError (e.g. no provider has a usable key) — callers
         translate that into a user-facing error.
         """
@@ -295,13 +323,17 @@ class RAGPipeline:
             return (
                 None, None, [],
                 "**No documents indexed yet.** Please upload files first via the Ingest Knowledge panel.",
-                [], "",
+                [], "", "",
             )
 
         candidates = self._candidates(model_name, provider)
         llm, prov, model, fallback, build_errors = self._build_first_working(candidates)
         if llm is None:
             raise ValueError(self._format_build_error(build_errors))
+
+        # The model actually built (the one a runtime failure would be about), so
+        # a fallback notice can name *which* model failed.
+        primary_label = self._label(prov, model)
 
         # If the chosen provider couldn't be built and we fell back, tell the user.
         notice = ""
@@ -332,7 +364,7 @@ class RAGPipeline:
             return (
                 llm, None, [],
                 "**No relevant content found** in the uploaded documents for your question.",
-                [], "",
+                [], "", "",
             )
 
         # 4. Build sources list for frontend transparency
@@ -393,7 +425,7 @@ class RAGPipeline:
             + history_messages
             + [HumanMessage(content=query)]
         )
-        return llm, messages, sources, None, fallback, notice
+        return llm, messages, sources, None, fallback, notice, primary_label
 
     def generate_response(
         self,
@@ -406,31 +438,36 @@ class RAGPipeline:
         Returns (answer: str, sources: list[dict], notice: str). Non-streaming.
         `notice` is "" unless a provider fallback happened (build- or run-time).
         """
-        llm, messages, sources, early_text, fallback, notice = self._prepare(
+        llm, messages, sources, early_text, fallback, notice, primary_label = self._prepare(
             query, model_name, provider, chat_history
         )
         if early_text is not None:
             return (early_text, [], "")
-        answer, run_notice = self._invoke_with_fallback(llm, messages, fallback)
+        answer, run_notice = self._invoke_with_fallback(llm, messages, fallback, primary_label)
         return (answer, sources, self._join_notice(notice, run_notice))
 
-    def _invoke_with_fallback(self, llm: Any, messages: list, fallback: List[tuple]) -> tuple:
+    def _invoke_with_fallback(
+        self, llm: Any, messages: list, fallback: List[tuple], primary_label: str = ""
+    ) -> tuple:
         """
         Invoke `llm`; on any runtime error (rate-limit, network, provider down)
         try each fallback (provider, model) in turn. Returns (answer, notice).
-        Raises ValueError only when every candidate fails.
+        The notice names the model that failed (`primary_label`) and a short
+        reason. Raises ValueError only when every candidate fails.
         """
         try:
             return llm.invoke(messages).content, ""
         except Exception as primary_err:
             errors = [str(primary_err)]
+            failed = primary_label or "The selected model"
+            reason = self._error_reason(str(primary_err))
             for prov, model in fallback:
                 try:
                     alt = build_chat_model(prov, model)
                     content = alt.invoke(messages).content
                     return content, (
-                        f"The selected model failed, so this answer was generated "
-                        f"with {self._label(prov, model)}."
+                        f"{failed} failed ({reason}), so this answer was generated "
+                        f"with {self._label(prov, model)} instead."
                     )
                 except Exception as e:
                     errors.append(str(e))
@@ -456,7 +493,7 @@ class RAGPipeline:
         streams token-by-token. ValueError from _prepare propagates to the
         endpoint, which emits an {"type":"error"} event.
         """
-        llm, messages, sources, early_text, fallback, notice = self._prepare(
+        llm, messages, sources, early_text, fallback, notice, primary_label = self._prepare(
             query, model_name, provider, chat_history
         )
         if early_text is not None:
@@ -465,9 +502,12 @@ class RAGPipeline:
             return
 
         yield {"type": "sources", "sources": sources}
-        yield from self._stream_with_fallback(llm, messages, fallback, notice)
+        yield from self._stream_with_fallback(llm, messages, fallback, notice, primary_label)
 
-    def _stream_with_fallback(self, llm: Any, messages: list, fallback: List[tuple], build_notice: str):
+    def _stream_with_fallback(
+        self, llm: Any, messages: list, fallback: List[tuple], build_notice: str,
+        primary_label: str = "",
+    ):
         """
         Stream tokens from `llm`; if a provider fails *before its first token*,
         transparently fall back to the next configured one. A mid-stream failure
@@ -489,10 +529,12 @@ class RAGPipeline:
             # This attempt started — announce any fallback, then stream its tokens.
             notice = build_notice
             if idx > 0:
+                failed = primary_label or "The selected model"
+                reason = self._error_reason(errors[0] if errors else "")
                 notice = self._join_notice(
                     build_notice,
-                    f"The selected model failed, so this answer was generated "
-                    f"with {self._label(cand[0], cand[1])}.",
+                    f"{failed} failed ({reason}), so this answer was generated "
+                    f"with {self._label(cand[0], cand[1])} instead.",
                 )
             if notice:
                 yield {"type": "notice", "content": notice}

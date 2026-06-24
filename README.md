@@ -19,7 +19,7 @@ Your documents never leave your machine.
 - **Advanced RAG** — history-aware query rewriting → multi-query expansion → **hybrid
   search** (dense FAISS + BM25 keyword) → Reciprocal Rank Fusion → optional cross-encoder
   **reranking** → grounded, cited Markdown answers. Streamed token-by-token (SSE).
-- **Multiple LLM providers** — Groq, plus any OpenAI-compatible free API (DeepSeek,
+- **Multiple LLM providers** — Groq, plus any OpenAI-compatible free API (NVIDIA NIM,
   Mistral, Kimi/Moonshot, z.ai, OpenRouter…), Google Gemini, **local Ollama** (auto-detected),
   and **fully offline** `llama.cpp` (GGUF) for no-internet use.
 - **Encrypted in-app API keys** — paste keys in Settings; they're **Fernet-encrypted at

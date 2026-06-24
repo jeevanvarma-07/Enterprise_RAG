@@ -31,6 +31,60 @@ def test_fastembed_name_mapping():
     assert embeddings._fastembed_name("custom-model") == "custom-model"  # passthrough
 
 
+# ── Multilingual models (Feature 1) ──────────────────────────────────
+
+def test_fastembed_name_multilingual_mappings():
+    # The two paraphrase models live under the sentence-transformers/ namespace
+    # in fastembed's catalog; the e5 id is already fully-qualified (passthrough).
+    assert (embeddings._fastembed_name("paraphrase-multilingual-MiniLM-L12-v2")
+            == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    assert (embeddings._fastembed_name("paraphrase-multilingual-mpnet-base-v2")
+            == "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+    assert (embeddings._fastembed_name("intfloat/multilingual-e5-large")
+            == "intfloat/multilingual-e5-large")
+
+
+def test_signature_multilingual(restore_settings):
+    config.save_settings({"embedding_backend": "fastembed",
+                          "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2"})
+    assert embeddings.signature() == "fastembed:paraphrase-multilingual-MiniLM-L12-v2"
+
+
+def test_list_embedding_models_shape(restore_settings):
+    config.save_settings({"embedding_model": "paraphrase-multilingual-MiniLM-L12-v2"})
+    models = config.list_embedding_models()
+    assert len(models) == len(config.EMBEDDING_MODELS)
+    ids = [m["id"] for m in models]
+    assert "all-MiniLM-L6-v2" in ids
+    assert "paraphrase-multilingual-MiniLM-L12-v2" in ids
+    assert "intfloat/multilingual-e5-large" in ids
+    # Required keys for the UI picker are present on every entry.
+    for m in models:
+        for key in ("id", "label", "languages", "dim", "multilingual", "tier", "active"):
+            assert key in m, f"{key} missing from {m['id']}"
+    # Exactly the selected model is flagged active.
+    active = [m["id"] for m in models if m["active"]]
+    assert active == ["paraphrase-multilingual-MiniLM-L12-v2"]
+
+
+def test_e5_is_registered_for_prefix():
+    # The e5 model must be in the prefix set or its retrieval silently degrades.
+    assert "intfloat/multilingual-e5-large" in config.E5_PREFIX_MODELS
+
+
+def test_e5_prefix_wrapper_prepends_instructions():
+    # Deterministic, no model download: a stub inner records what it received.
+    class _Stub:
+        def embed_documents(self, texts):
+            return texts
+        def embed_query(self, text):
+            return text
+
+    wrapped = embeddings._E5PrefixEmbeddings(_Stub())
+    assert wrapped.embed_documents(["chunk one"]) == ["passage: chunk one"]
+    assert wrapped.embed_query("a question") == "query: a question"
+
+
 def test_index_writes_embedding_sidecar(tmp_path):
     vm = VectorStoreManager(index_path=str(tmp_path / "vs"))
     vm.add_documents(["hello", "world"], source_filename="a.txt")

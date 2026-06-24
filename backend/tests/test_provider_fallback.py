@@ -76,7 +76,7 @@ def test_candidates_requested_first_then_configured(monkeypatch):
     assert cands[0] == ("groq", "llama-3.1-8b-instant")
     assert ("google", "gemini-2.0-flash") in cands
     # An unconfigured provider must not appear as a fallback target.
-    assert all(p != "deepseek" for p, _ in cands)
+    assert all(p != "mistral" for p, _ in cands)
 
 
 def test_candidates_single_when_no_other_configured(monkeypatch):
@@ -141,6 +141,32 @@ def test_invoke_falls_back_to_second(monkeypatch):
     )
     assert answer == "from fallback"
     assert "Google Gemini" in notice
+
+
+def test_invoke_notice_names_failed_model_and_reason(monkeypatch):
+    """The runtime notice should say WHICH model failed and a short why."""
+    monkeypatch.setattr("services.generation.build_chat_model",
+                        lambda prov, model: _FakeLLM("from fallback"))
+    p = _pipeline()
+    primary = _FakeLLM(invoke_fails=True)   # raises RuntimeError("rate limit")
+    _, notice = p._invoke_with_fallback(
+        primary, [], fallback=[("google", "gemini-2.0-flash")],
+        primary_label="NVIDIA NIM · meta/llama-3.3-70b-instruct",
+    )
+    assert "NVIDIA NIM · meta/llama-3.3-70b-instruct" in notice  # the model that failed
+    assert "rate limit reached" in notice            # the reason
+    assert "Google Gemini" in notice                 # the model that answered
+
+
+def test_error_reason_classifies_common_failures():
+    p = _pipeline()
+    assert p._error_reason("Error code: 401 - invalid_api_key") == "invalid or missing API key"
+    assert p._error_reason("Error code: 402 - Payment Required") == "no account balance — this provider needs paid credit"
+    assert p._error_reason("HTTP 429 Too Many Requests") == "rate limit reached"
+    assert p._error_reason("model not found: foo") == "model not available"
+    assert p._error_reason("Request timed out") == "request timed out"
+    assert p._error_reason("Connection refused by host") == "network error"
+    assert p._error_reason("some weird thing") == "error"
 
 
 def test_invoke_raises_when_all_fail(monkeypatch):

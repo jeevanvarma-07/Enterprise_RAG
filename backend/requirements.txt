@@ -34,8 +34,10 @@ rank_bm25
 # Embeddings
 sentence-transformers
 # Torch-free embedding backend (ONNX, ~no extra weight). Lets the Lite profile
-# embed without pulling torch (~2 GB). Same all-MiniLM-L6-v2 model / 384-dim space.
-# Select it in Settings → Embeddings → "Light (ONNX)", then Rebuild index.
+# embed without pulling torch (~2 GB). Provides all-MiniLM-L6-v2 (English) AND
+# the multilingual models (paraphrase-multilingual-MiniLM-L12-v2 / -mpnet /
+# intfloat e5-large) that add Tamil + 50-language retrieval — all torch-free.
+# Pick one in Settings → Embeddings, then Rebuild index.
 fastembed
 
 # Document parsing
@@ -45,3 +47,13 @@ openpyxl
 pytesseract
 easyocr
 Pillow
+
+# Structured PDF table extraction (pure-Python, no torch, Lite-safe). Pulls
+# tables out *as tables* (labelled rows) so table questions retrieve well.
+pdfplumber
+
+# Optional high-quality table parsing (OPTIONAL, Power mode). IBM Docling's
+# TableFormer is layout-aware but needs Python >=3.10 AND pulls torch (~2 GB),
+# so it is NOT installed by default and is auto-skipped on the Lite / Python-3.9
+# path. Install it (Python >=3.10) and set mode to Power to enable.
+# docling
