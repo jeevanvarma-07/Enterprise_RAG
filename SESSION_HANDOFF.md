@@ -12,31 +12,60 @@ does (via git).** Update + commit it at the END of every working session.
 
 ---
 
-## Current state (updated 2026-06-24)
+## Current state (updated 2026-07-01)
 
-Default LLM is now **Cerebras GPT-OSS 120B** (was Groq `llama-3.1-8b-instant`) —
-`config.DEFAULT_PROVIDER`/`DEFAULT_MODEL` + `DEFAULT_SETTINGS`. Roomier free tier
-sidesteps Groq's 6k-TPM 413. Only changes the shipped default / fresh installs; a
-machine with a persisted `settings.json` keeps its own picked model. All backend
-tests pass. Pushed to `origin/main`, working tree clean.
+**Most of the audit's HIGH-priority "critical path" is now implemented** (see
+`TECHNICAL_AUDIT_2026-06-27.md` for the full 6.5/10 audit that drove this work).
+Backend: 101 tests pass (1 skipped). Frontend: `tsc -b` clean + `vite build` succeeds.
 
-Prior commit: `dc2c263` — multilingual embeddings + PDF table parsing + live model
-picker + Cerebras model-ID fix.
+Done this session (2026-07-01):
+1. **LICENSE** — added MIT (`LICENSE`, © Jeevan Varma R). Repo no longer all-rights-reserved.
+2. **Path traversal fixed** — `main.py` `_process_one` now `os.path.basename()`-sanitizes
+   the uploaded filename (rejects empty/`.`/`..`) and uses the safe name for save +
+   indexing + status, so a crafted `../../x` name can't escape `uploads/`.
+3. **BM25 cache on delete** — was ALREADY correct in current code (`indexing.py`
+   `delete_by_source` resets `self._bm25 = None`); audit line had drifted. No change needed.
+4. **Rapid-send race fixed** — `ChatInterface.tsx`: `sendingRef` lock guards re-entrant
+   `handleSend`; example-query buttons are `disabled={loading}`.
+5. **AbortController** — `ChatInterface.tsx`: stream fetch carries an `AbortController`
+   (`abortRef`); the session-change effect cleanup aborts it; `AbortError` is swallowed so
+   a switched-away bubble is left untouched. Refs cleared in `finally`.
+6. **rehype-sanitize** — installed `rehype-sanitize@^6`; AI markdown now renders with
+   `rehypePlugins={[rehypeSanitize]}` (strips `javascript:` hrefs etc.).
+7. **"4th Semester Project" footer removed** — `LandingPage.tsx` footer reworded to a
+   neutral "Local-first document intelligence · FastAPI + React + FAISS".
+8. **Structured logging** — new `services/logging_config.py` (`setup_logging()`: console +
+   `RotatingFileHandler` → `DATA_DIR/logs/app.log`, 2 MB×5, `RAG_LOG_LEVEL` env). Wired in
+   `main.py` at startup. Replaced ALL `print()` in `services/` (document_processing,
+   indexing, generation, embeddings, reranker, table_extraction) with `logging`. New
+   `config.LOGS_DIR` (created by `ensure_dirs`). Updated `test_embeddings.py`
+   mismatch-warning test to assert via `caplog` instead of `capsys`.
+9. **alert/confirm → modals** — new reusable `components/ConfirmDialog.tsx` (portal,
+   Escape/backdrop close, `role="dialog"`, focuses confirm btn). `VectorStoreTab.tsx` now
+   uses it for batch-delete + clear-all, and an inline dismissible error banner replaces
+   the `alert()` failures.
 
-**What we're doing:** wiring the multi-provider LLM picker for the college demo —
-pick a model in the top bar, paste a free per-provider API key in Settings, working
-live (no refresh). Author collecting free API keys.
+Default LLM is Cerebras GPT-OSS 120B.
+
+**Committed 2026-07-01** (next session): the work above + the demo-build cleanup landed as
+8 focused, per-concern commits on top of `1b3b152` — gitignore DEMO_TRANSFER → security
+(filename + markdown sanitize) → structured logging → chat-race/abort → a11y ConfirmDialog →
+MIT LICENSE → footer reword → this docs/handoff update. Verified before committing: backend
+`pytest` 101 passed / 1 skipped, frontend `tsc -b` clean. Not pushed yet.
 
 ## Next steps (in priority order)
-1. Test Cerebras live: reload the app, pick **Cerebras → GPT-OSS 120B**, confirm it
-   answers without falling back to Groq. (Cerebras free tier = `gpt-oss-120b` +
-   `zai-glm-4.7`; both reasoning models.)
-2. As more free keys are obtained (have Gemini + Cerebras), report the exact model
-   IDs and check/add them to `backend/config.py` `PROVIDERS`.
-3. ~~Open decision: make Cerebras GPT-OSS the default model?~~ ✅ **Done** — Cerebras
-   GPT-OSS 120B is now the shipped default.
-4. Bigger plan items still open: offline LLM (llama.cpp + GGUF download, Phase 1);
-   Phase 3 laptop profiling; Phase 5 branding/licensing.
+1. **⚠️ USER ACTION — rotate the Groq key.** `backend/.env` contains a REAL key
+   (`GROQ_API_KEY="gsk_…"`), not a placeholder. Rotate it at console.groq.com, delete the
+   line from `.env`, and re-add the new key via Settings → LLM Providers (encrypted store).
+   Left in place for now so dev Groq access isn't broken before rotation. (User said they'd
+   rotate it themselves — still pending as of 2026-07-01.)
+2. ~~Commit the session's work~~ — DONE 2026-07-01 (split per concern; see Current state).
+   Optional follow-up: `git push` when ready.
+3. (Optional) MEDIUM-priority audit items not yet done: separate prompt budgets
+   (`generation.py`), focus traps on the OTHER modals (Settings/Help/FirstRun/Source),
+   React error boundary, ARIA labels on icon buttons, `prefers-reduced-motion`,
+   index-based message keys → `key={msg.id || idx}`, frontend Vitest tests.
+4. Bigger plan items still open: offline LLM (llama.cpp + GGUF); laptop profiling.
 
 ## Cross-machine gotchas
 - **API keys** (`keys.enc`/`secret.key`/`.env`) are gitignored → re-enter per machine.
