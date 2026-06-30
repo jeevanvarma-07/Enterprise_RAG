@@ -123,7 +123,7 @@ export default function LandingPage({ onEnter }: Props) {
         {/* ── Footer ── */}
         <motion.footer initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }}
           className="border-t border-slate-800 pt-8 text-center">
-          <p className="text-xs text-slate-500 mb-4">Enterprise RAG System · 4th Semester Project · Built with FastAPI + React + FAISS + Groq</p>
+          <p className="text-xs text-slate-500 mb-4">Enterprise RAG System · Local-first document intelligence · FastAPI + React + FAISS</p>
           <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
             onClick={onEnter}
             className="px-6 py-2.5 bg-blue-600/30 hover:bg-blue-500/40 border border-blue-500/30 text-blue-300 text-sm font-medium rounded-xl transition-all flex items-center gap-2 mx-auto">
