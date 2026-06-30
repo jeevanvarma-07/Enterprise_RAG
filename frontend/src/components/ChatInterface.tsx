@@ -4,6 +4,7 @@ import { Send, Bot, User, Sparkles, Copy, Trash2, ChevronDown, ChevronUp, FileTe
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import api, { API_BASE_URL } from '../api';
 
 interface Source { file: string; chunk: number; preview: string; location?: string; text?: string; }
@@ -446,7 +447,7 @@ export default function ChatInterface({
                         prose-code:bg-slate-800 prose-code:px-1 prose-code:rounded
                         prose-ul:text-slate-200 prose-ol:text-slate-200
                         prose-li:marker:text-blue-400 prose-p:text-slate-200">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{msg.content}</ReactMarkdown>
                       </div>
                     ) : (
                       // Empty AI bubble = streaming hasn't produced a token yet.

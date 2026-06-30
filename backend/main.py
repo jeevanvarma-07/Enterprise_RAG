@@ -89,17 +89,22 @@ async def system_info():
 
 async def _process_one(file: UploadFile) -> dict:
     """Save a single uploaded file and index it. Returns status dict."""
-    file_path = str(config.UPLOADS_DIR / file.filename)
+    # Sanitize the client-supplied filename: strip any directory components so a
+    # crafted name like "../../settings.json" cannot escape UPLOADS_DIR.
+    safe_name = os.path.basename(file.filename or "")
+    if not safe_name or safe_name in (".", ".."):
+        return {"file": file.filename, "status": "error", "detail": "invalid filename"}
+    file_path = str(config.UPLOADS_DIR / safe_name)
     try:
         with open(file_path, "wb") as buf:
             shutil.copyfileobj(file.file, buf)
         chunks = process_document_chunks(file_path)
         if chunks:
-            vector_manager.add_documents(chunks, source_filename=file.filename)
-            return {"file": file.filename, "status": "ok", "chunks": len(chunks)}
-        return {"file": file.filename, "status": "empty"}
+            vector_manager.add_documents(chunks, source_filename=safe_name)
+            return {"file": safe_name, "status": "ok", "chunks": len(chunks)}
+        return {"file": safe_name, "status": "empty"}
     except Exception as e:
-        return {"file": file.filename, "status": "error", "detail": str(e)}
+        return {"file": safe_name, "status": "error", "detail": str(e)}
 
 
 # ─────────────────────────────────────────────
