@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Trash2, Download, RefreshCw, Database, FileText, CheckSquare, Square, Search, ArrowUpDown } from 'lucide-react';
+import { Trash2, Download, RefreshCw, Database, FileText, CheckSquare, Square, Search, ArrowUpDown, AlertTriangle, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api, { API_BASE_URL } from '../api';
+import ConfirmDialog from './ConfirmDialog';
 
 interface DocEntry {
     filename: string;
@@ -18,6 +19,9 @@ export default function VectorStoreTab() {
     const [clearing, setClearing] = useState(false);
     const [search, setSearch] = useState('');
     const [sortBy, setSortBy] = useState<'chunks-desc' | 'chunks-asc' | 'date-desc' | 'date-asc'>('date-desc');
+    const [error, setError] = useState<string | null>(null);
+    // Pending destructive action awaiting in-app confirmation (replaces window.confirm).
+    const [confirm, setConfirm] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
 
     const fetchDocs = useCallback(async () => {
         setLoading(true);
@@ -59,40 +63,58 @@ export default function VectorStoreTab() {
             setDocs(prev => prev.filter(d => d.filename !== filename));
             setSelected(prev => { const n = new Set(prev); n.delete(filename); return n; });
         } catch {
-            alert(`Failed to delete ${filename}`);
+            setError(`Failed to delete ${filename}.`);
         } finally {
             setDeletingFile(null);
         }
     };
 
-    // ── Batch delete ──
-    const handleDeleteSelected = async () => {
-        if (selected.size === 0) return;
+    // ── Batch delete (confirm via in-app dialog) ──
+    const performDeleteSelected = async () => {
         const toDelete = Array.from(selected);
-        if (!window.confirm(`Delete ${toDelete.length} selected file(s)?`)) return;
         setDeletingBatch(true);
         try {
             await api.post('/api/index/documents/batch-delete', { filenames: toDelete });
             setDocs(prev => prev.filter(d => !selected.has(d.filename)));
             setSelected(new Set());
         } catch {
-            alert('Batch delete failed. Check backend logs.');
+            setError('Batch delete failed. Check backend logs.');
         } finally {
             setDeletingBatch(false);
         }
     };
 
-    // ── Clear all ──
-    const handleClear = async () => {
-        if (!window.confirm('Clear the ENTIRE index? This cannot be undone.')) return;
+    const handleDeleteSelected = () => {
+        if (selected.size === 0) return;
+        setConfirm({
+            title: 'Delete selected files',
+            message: `Delete ${selected.size} selected file(s) from the index? This cannot be undone.`,
+            confirmLabel: 'Delete',
+            onConfirm: () => { setConfirm(null); performDeleteSelected(); },
+        });
+    };
+
+    // ── Clear all (confirm via in-app dialog) ──
+    const performClear = async () => {
         setClearing(true);
         try {
             await api.delete('/api/index/clear');
             setDocs([]);
             setSelected(new Set());
+        } catch {
+            setError('Failed to clear the index. Check backend logs.');
         } finally {
             setClearing(false);
         }
+    };
+
+    const handleClear = () => {
+        setConfirm({
+            title: 'Clear the entire index',
+            message: 'This permanently removes every indexed document and cannot be undone.',
+            confirmLabel: 'Clear all',
+            onConfirm: () => { setConfirm(null); performClear(); },
+        });
     };
 
     const handleDownload = () => { window.open(`${API_BASE_URL}/api/index/export`, '_blank'); };
@@ -163,6 +185,22 @@ export default function VectorStoreTab() {
                     </button>
                 </div>
             </div>
+
+            {/* Inline error banner (replaces blocking alert()) */}
+            <AnimatePresence>
+                {error && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm shrink-0"
+                    >
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span className="flex-1">{error}</span>
+                        <button onClick={() => setError(null)} className="p-1 rounded-lg hover:bg-red-500/20 transition-colors" title="Dismiss">
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Search + Sort bar */}
             <div className="flex items-center gap-3 shrink-0">
@@ -277,6 +315,20 @@ export default function VectorStoreTab() {
                     </table>
                 )}
             </div>
+
+            <AnimatePresence>
+                {confirm && (
+                    <ConfirmDialog
+                        open
+                        title={confirm.title}
+                        message={confirm.message}
+                        confirmLabel={confirm.confirmLabel}
+                        danger
+                        onConfirm={confirm.onConfirm}
+                        onCancel={() => setConfirm(null)}
+                    />
+                )}
+            </AnimatePresence>
         </div>
     );
 }
