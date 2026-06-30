@@ -167,6 +167,13 @@ export default function ChatInterface({
   // message — its messages are already on screen and must not be wiped.
   const sessionIdRef = useRef<string | null>(currentSessionId);
   const justCreatedRef = useRef(false);
+  // Synchronous re-entrancy lock: blocks a rapid double-click (e.g. two example
+  // buttons) from firing concurrent streams that both patch the same bubble.
+  const sendingRef = useRef(false);
+  // Controller for the in-flight stream so we can abort it when the user
+  // switches sessions or the component unmounts (otherwise the old reader keeps
+  // writing into the new session's last message).
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -201,7 +208,7 @@ export default function ChatInterface({
         if (!cancelled) setMessages([{ ...INITIAL_MSG, timestamp: new Date().toISOString() }]);
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; abortRef.current?.abort(); };
   }, [currentSessionId]);
 
   // Patch the last message in place (used to grow the streaming AI reply).
@@ -214,8 +221,10 @@ export default function ChatInterface({
   };
 
   const handleSend = async (text?: string) => {
+    if (sendingRef.current) return;   // a stream is already in flight
     const userMsg = (text ?? input).trim();
     if (!userMsg) return;
+    sendingRef.current = true;
     setInput('');
 
     const historyToSend = messages
@@ -228,6 +237,9 @@ export default function ChatInterface({
     setMessages(prev => [...prev, userMessage, aiPlaceholder]);
     setLoading(true);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const resp = await fetch(`${API_BASE_URL}/api/chat/stream`, {
         method: 'POST',
@@ -238,6 +250,7 @@ export default function ChatInterface({
           provider: selectedProvider,
           chat_history: historyToSend,
         }),
+        signal: controller.signal,
       });
       if (!resp.ok) {
         // The endpoint normally streams errors as `error` events (HTTP 200),
@@ -315,6 +328,11 @@ export default function ChatInterface({
         } catch { /* history is best-effort; never block the chat */ }
       }
     } catch (err) {
+      // Stream was deliberately cancelled (session switch / unmount) — the bubble
+      // belongs to a session we've navigated away from, so leave state untouched.
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
       // Distinguish a server-reported problem (has a message) from a raw
       // network failure (fetch throws a TypeError with no useful detail).
       const msg = err instanceof Error ? err.message : '';
@@ -325,6 +343,8 @@ export default function ChatInterface({
           : `**Error:** ${msg}`,
       });
     } finally {
+      sendingRef.current = false;
+      if (abortRef.current === controller) abortRef.current = null;
       setLoading(false);
     }
   };
@@ -399,8 +419,8 @@ export default function ChatInterface({
               <p className="text-xs text-slate-500 text-center mb-3 font-medium">Try an example question:</p>
               <div className="flex flex-wrap gap-2 justify-center">
                 {EXAMPLE_QUERIES.map(q => (
-                  <button key={q} onClick={() => handleSend(q)}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-blue-300 text-slate-400 transition-all">
+                  <button key={q} onClick={() => handleSend(q)} disabled={loading}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:border-blue-500/40 hover:bg-blue-500/10 hover:text-blue-300 text-slate-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     {q}
                   </button>
                 ))}
