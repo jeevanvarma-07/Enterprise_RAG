@@ -25,10 +25,13 @@ its existing PyPDF2 behavior exactly.
 
 from __future__ import annotations
 
+import logging
 import sys
 from typing import List, Tuple
 
 import config
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────
 # Optional engines — imported defensively (mirrors the OCR import pattern in
@@ -138,7 +141,7 @@ def _extract_with_pdfplumber(file_path: str) -> List[Tuple[str, dict]]:
                 try:
                     tables = page.extract_tables() or []
                 except Exception as e:
-                    print(f"[tables] pdfplumber page {page_no} failed: {e}")
+                    logger.warning(f"pdfplumber page {page_no} failed: {e}")
                     continue
                 for t_idx, raw in enumerate(tables, start=1):
                     text = _rows_to_text(raw)
@@ -148,7 +151,7 @@ def _extract_with_pdfplumber(file_path: str) -> List[Tuple[str, dict]]:
                                     "content_type": "table"})
                         )
     except Exception as e:
-        print(f"[tables] pdfplumber could not open {file_path}: {e}")
+        logger.warning(f"pdfplumber could not open {file_path}: {e}")
     return chunks
 
 
@@ -164,7 +167,7 @@ def _extract_with_docling(file_path: str) -> List[Tuple[str, dict]]:
     try:
         from docling.document_converter import DocumentConverter
     except Exception as e:
-        print(f"[tables] docling unavailable: {e}")
+        logger.info(f"docling unavailable: {e}")
         return []
 
     chunks: List[Tuple[str, dict]] = []
@@ -188,5 +191,5 @@ def _extract_with_docling(file_path: str) -> List[Tuple[str, dict]]:
                 meta["page"] = page
             chunks.append((text, meta))
     except Exception as e:
-        print(f"[tables] docling parse failed for {file_path}: {e}")
+        logger.warning(f"docling parse failed for {file_path}: {e}")
     return chunks

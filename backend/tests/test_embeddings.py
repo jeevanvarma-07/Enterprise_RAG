@@ -1,6 +1,7 @@
 """Tests for the embedding backend abstraction + index provenance stamping."""
 
 import json
+import logging
 import os
 
 import config
@@ -130,7 +131,7 @@ def test_rebuild_embeddings_empty_is_noop(tmp_path):
     assert result["documents"] == 0
 
 
-def test_mismatch_warning_does_not_raise(tmp_path, capsys):
+def test_mismatch_warning_does_not_raise(tmp_path, caplog):
     vs_dir = tmp_path / "vs"
     vm = VectorStoreManager(index_path=str(vs_dir))
     vm.add_documents(["hello"], source_filename="a.txt")
@@ -138,7 +139,11 @@ def test_mismatch_warning_does_not_raise(tmp_path, capsys):
     # Corrupt the provenance to simulate an index built by a different backend.
     with open(os.path.join(str(vs_dir), "embedding_info.json"), "w") as f:
         json.dump({"signature": "other-backend:other-model"}, f)
-    # Reloading must warn, not crash.
-    vm2 = VectorStoreManager(index_path=str(vs_dir))
+    # Reloading must warn (via logging), not crash.
+    with caplog.at_level(logging.WARNING):
+        vm2 = VectorStoreManager(index_path=str(vs_dir))
     assert vm2.is_loaded()
-    assert "WARNING" in capsys.readouterr().out
+    assert any(
+        r.levelno == logging.WARNING and "active backend" in r.getMessage()
+        for r in caplog.records
+    )

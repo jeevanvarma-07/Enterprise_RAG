@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import List, Tuple
 
@@ -12,6 +13,8 @@ except ImportError:  # pragma: no cover - legacy langchain only
     from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 import config
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────
 # Optional OCR stack. Both pytesseract (+ the Tesseract binary) and pdf2image
@@ -67,7 +70,7 @@ def process_document(file_path: str) -> list:
         raise ValueError(f"Unsupported file extension: {ext}")
 
     if not text.strip():
-        print(f"[WARNING] No text extracted from {file_path}")
+        logger.warning(f"No text extracted from {file_path}")
         return []
 
     return chunk_text(text)
@@ -123,7 +126,7 @@ def _extract_pdf_table_chunks(file_path: str) -> List[Tuple[str, dict]]:
     try:
         return table_extraction.extract_pdf_tables(file_path)
     except Exception as e:  # pragma: no cover - defensive
-        print(f"[WARNING] Table extraction failed for {file_path}: {e}")
+        logger.warning(f"Table extraction failed for {file_path}: {e}")
         return []
 
 
@@ -140,7 +143,7 @@ def extract_pdf(file_path: str) -> str:
 
     # If we got very little text (< 50 chars total), it's likely an image-based PDF
     if len(text.strip()) < 50:
-        print(f"[INFO] Text PDF extraction got very little text — trying OCR for {file_path}")
+        logger.info(f"Text PDF extraction got very little text — trying OCR for {file_path}")
         text = _extract_pdf_via_ocr(file_path)
 
     return text
@@ -160,11 +163,11 @@ def _extract_pdf_pages(file_path: str) -> List[Tuple[int, str]]:
                 content = page.extract_text() or ""
                 pages.append((i + 1, content))
     except Exception as e:
-        print(f"[ERROR] PyPDF2 page extraction failed for {file_path}: {e}")
+        logger.error(f"PyPDF2 page extraction failed for {file_path}: {e}")
 
     total_chars = sum(len(t.strip()) for _, t in pages)
     if total_chars < 50:
-        print(f"[INFO] Little text in {file_path} — trying per-page OCR.")
+        logger.info(f"Little text in {file_path} — trying per-page OCR.")
         ocr_pages = _extract_pdf_pages_via_ocr(file_path)
         if ocr_pages:
             return ocr_pages
@@ -175,22 +178,22 @@ def _extract_pdf_pages(file_path: str) -> List[Tuple[int, str]]:
 def _extract_pdf_pages_via_ocr(file_path: str) -> List[Tuple[int, str]]:
     """Per-page OCR for scanned/image PDFs → [(page_number, text), ...]."""
     if not _ocr_ready():
-        print("[INFO] OCR disabled or unavailable — skipping OCR for this PDF "
-              "(enable Balanced/Power mode and install Tesseract to OCR scanned files).")
+        logger.info("OCR disabled or unavailable — skipping OCR for this PDF "
+                    "(enable Balanced/Power mode and install Tesseract to OCR scanned files).")
         return []
     if not PDF2IMAGE_AVAILABLE:
-        print("[WARNING] pdf2image not installed — cannot OCR this PDF.")
+        logger.warning("pdf2image not installed — cannot OCR this PDF.")
         return []
     out: List[Tuple[int, str]] = []
     try:
         images = convert_from_path(file_path, dpi=200)
-        print(f"[INFO] OCR processing {len(images)} page(s) from {os.path.basename(file_path)}...")
+        logger.info(f"OCR processing {len(images)} page(s) from {os.path.basename(file_path)}...")
         for i, img in enumerate(images):
             page_text = pytesseract.image_to_string(img, lang="eng")
             if page_text.strip():
                 out.append((i + 1, page_text))
     except Exception as e:
-        print(f"[ERROR] OCR failed for {file_path}: {e}")
+        logger.error(f"OCR failed for {file_path}: {e}")
     return out
 
 
@@ -220,7 +223,7 @@ def _extract_excel_blocks(file_path: str) -> List[Tuple[str, dict]]:
                 blocks.append((text, {"rows": f"{start + 1}-{start + len(batch)}"}))
         return blocks
     except Exception as e:
-        print(f"[ERROR] Excel/CSV block extraction failed: {e}")
+        logger.error(f"Excel/CSV block extraction failed: {e}")
         return []
 
 
@@ -235,7 +238,7 @@ def _extract_pdf_text(file_path: str) -> str:
                 if content:
                     text += content + "\n"
     except Exception as e:
-        print(f"[ERROR] PyPDF2 failed for {file_path}: {e}")
+        logger.error(f"PyPDF2 failed for {file_path}: {e}")
     return text
 
 
@@ -245,23 +248,23 @@ def _extract_pdf_via_ocr(file_path: str) -> str:
     Used for scanned documents, image PDFs, and handwritten forms.
     """
     if not _ocr_ready():
-        print("[INFO] OCR disabled or unavailable — skipping OCR for this PDF.")
+        logger.info("OCR disabled or unavailable — skipping OCR for this PDF.")
         return ""
     if not PDF2IMAGE_AVAILABLE:
-        print("[WARNING] pdf2image not installed — cannot OCR this PDF. Run: pip install pdf2image")
+        logger.warning("pdf2image not installed — cannot OCR this PDF. Run: pip install pdf2image")
         return ""
 
     text = ""
     try:
         # Convert PDF pages → PIL images (DPI 200 is a good balance of quality/speed)
         images = convert_from_path(file_path, dpi=200)
-        print(f"[INFO] OCR processing {len(images)} page(s) from {os.path.basename(file_path)}...")
+        logger.info(f"OCR processing {len(images)} page(s) from {os.path.basename(file_path)}...")
         for i, img in enumerate(images):
             page_text = pytesseract.image_to_string(img, lang="eng")
             if page_text.strip():
                 text += f"--- Page {i + 1} ---\n{page_text}\n"
     except Exception as e:
-        print(f"[ERROR] OCR failed for {file_path}: {e}")
+        logger.error(f"OCR failed for {file_path}: {e}")
     return text
 
 
@@ -306,7 +309,7 @@ def extract_excel(file_path: str) -> str:
         return "\n\n".join(text_blocks)
 
     except Exception as e:
-        print(f"[ERROR] Excel/CSV extraction failed: {e}")
+        logger.error(f"Excel/CSV extraction failed: {e}")
 
         return ""
 
@@ -317,8 +320,8 @@ def extract_excel(file_path: str) -> str:
 def extract_image(file_path: str) -> str:
     """Use pytesseract OCR to extract text from image files."""
     if not _ocr_ready():
-        print("[INFO] OCR disabled or unavailable — image text not extracted "
-              "(enable Balanced/Power mode and install Tesseract for image OCR).")
+        logger.info("OCR disabled or unavailable — image text not extracted "
+                    "(enable Balanced/Power mode and install Tesseract for image OCR).")
         return ""
     try:
         img = Image.open(file_path)
@@ -327,7 +330,7 @@ def extract_image(file_path: str) -> str:
         text = pytesseract.image_to_string(img, lang="eng")
         return text
     except Exception as e:
-        print(f"[ERROR] Image OCR failed for {file_path}: {e}")
+        logger.error(f"Image OCR failed for {file_path}: {e}")
         return ""
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import json
 import shutil
@@ -9,6 +10,8 @@ from langchain_core.documents import Document
 
 import config
 from services.embeddings import get_embeddings, signature as embedding_signature
+
+logger = logging.getLogger(__name__)
 
 
 class VectorStoreManager:
@@ -47,9 +50,9 @@ class VectorStoreManager:
             return
         want = embedding_signature()
         if have and have != want:
-            print(f"[indexing] WARNING: index was built with embeddings '{have}' "
-                  f"but the active backend is '{want}'. Retrieval may be wrong — "
-                  f"rebuild the index after changing embeddings.")
+            logger.warning(f"Index was built with embeddings '{have}' "
+                           f"but the active backend is '{want}'. Retrieval may be wrong — "
+                           f"rebuild the index after changing embeddings.")
 
     # ---------- metadata helpers ----------
 
@@ -74,9 +77,9 @@ class VectorStoreManager:
                 self.index_path, self.embeddings, allow_dangerous_deserialization=True
             )
             self._check_embedding_info()
-            print("Loaded existing FAISS index.")
+            logger.info("Loaded existing FAISS index.")
         else:
-            print("No existing index found. Starting fresh.")
+            logger.info("No existing index found. Starting fresh.")
 
     def add_documents(self, text_chunks: list, source_filename: str = "unknown"):
         """
@@ -196,7 +199,7 @@ class VectorStoreManager:
                 from langchain_community.retrievers import BM25Retriever
                 self._bm25 = BM25Retriever.from_documents(docs)
             except Exception as e:
-                print(f"[BM25] keyword retriever unavailable: {e}")
+                logger.warning(f"BM25 keyword retriever unavailable: {e}")
                 return None
         self._bm25.k = k
         return self._bm25
@@ -212,7 +215,7 @@ class VectorStoreManager:
         self._metadata = {}
         if os.path.exists(self.index_path):
             shutil.rmtree(self.index_path)
-        print("Vector store cleared.")
+        logger.info("Vector store cleared.")
 
     # ---------- Phase 2: management ----------
 

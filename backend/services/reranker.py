@@ -20,6 +20,9 @@ from typing import List
 from langchain_core.documents import Document
 
 import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Lazily-built singletons. _ranker is the flashrank Ranker; _disabled latches
 # True after a failed load so we don't retry (and re-log) on every query.
@@ -53,12 +56,12 @@ def _get_ranker():
             model_name=config.RERANK_MODEL,
             cache_dir=str(config.MODELS_DIR),
         )
-        print(f"[RERANK] loaded cross-encoder '{config.RERANK_MODEL}'")
+        logger.info(f"Loaded cross-encoder '{config.RERANK_MODEL}'")
         return _ranker
     except Exception as e:
         _disabled = True
-        print(
-            f"[RERANK] disabled (falling back to fusion order): {e}. "
+        logger.warning(
+            f"Reranking disabled (falling back to fusion order): {e}. "
             f"Install with `pip install flashrank` to enable reranking."
         )
         return None
@@ -91,5 +94,5 @@ def rerank(query: str, docs: List[Document], top_n: int) -> List[Document]:
             ordered += [d for d in docs if id(d) not in seen]
         return ordered[:top_n]
     except Exception as e:
-        print(f"[RERANK] scoring failed, using fusion order: {e}")
+        logger.warning(f"Reranker scoring failed, using fusion order: {e}")
         return docs[:top_n]

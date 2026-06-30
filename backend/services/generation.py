@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import pandas as pd
@@ -14,6 +15,8 @@ import config
 from services.providers import build_chat_model, fallback_candidates
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Sentinel marking "the stream ended without yielding anything" (distinct from a
 # real empty-string chunk), used by the streaming fallback to tell a clean empty
@@ -54,7 +57,7 @@ def _scan_uploads_for_exact_match(query: str, uploads_dir: Optional[str] = None)
                     parts = [f"{col}: {val}" for col, val in row.items() if str(val).strip()]
                     matched_rows.append("[From {}]\n".format(fname) + " | ".join(parts))
         except Exception as e:
-            print(f"[EXACT LOOKUP] {fname}: {e}")
+            logger.warning(f"Exact-lookup scan failed for {fname}: {e}")
 
     return "\n\n".join(matched_rows)
 

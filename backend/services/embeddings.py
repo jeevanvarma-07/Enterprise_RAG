@@ -15,10 +15,13 @@ falling back from one to the other never breaks an existing index.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Any, Tuple
 
 import config
+
+logger = logging.getLogger(__name__)
 
 _FASTEMBED = ("fastembed", "onnx")
 
@@ -58,7 +61,7 @@ def _effective_backend(requested: str) -> str:
         return requested
     other = "sentence-transformers" if requested in _FASTEMBED else "fastembed"
     if _is_importable(other):
-        print(f"[embeddings] '{requested}' backend unavailable; using '{other}'.")
+        logger.warning(f"'{requested}' backend unavailable; using '{other}'.")
         return other
     return requested
 

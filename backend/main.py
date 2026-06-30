@@ -7,12 +7,19 @@ import json
 import shutil
 import asyncio
 
+import logging
+
 import config
 from services import storage
+from services.logging_config import setup_logging
 from services.document_processing import process_document_chunks
 from services.indexing import VectorStoreManager
 from services.generation import RAGPipeline
 from pydantic import BaseModel
+
+# Configure logging before anything else so startup messages are captured.
+setup_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Enterprise RAG API", version=config.APP_VERSION)
 

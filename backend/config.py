@@ -56,6 +56,7 @@ DATA_DIR: Path = _default_data_dir()
 UPLOADS_DIR: Path = DATA_DIR / "uploads"
 VECTOR_STORE_DIR: Path = DATA_DIR / "vector_store"
 MODELS_DIR: Path = DATA_DIR / "models"          # for downloaded local GGUF models (Phase 1)
+LOGS_DIR: Path = DATA_DIR / "logs"              # rotating application logs
 SETTINGS_PATH: Path = DATA_DIR / "settings.json"
 METADATA_PATH: Path = VECTOR_STORE_DIR / "metadata.json"
 DB_PATH: Path = DATA_DIR / "rag.db"          # SQLite: chat sessions + history
@@ -63,7 +64,7 @@ DB_PATH: Path = DATA_DIR / "rag.db"          # SQLite: chat sessions + history
 
 def ensure_dirs() -> None:
     """Create the data directories if they don't exist yet."""
-    for d in (DATA_DIR, UPLOADS_DIR, VECTOR_STORE_DIR, MODELS_DIR):
+    for d in (DATA_DIR, UPLOADS_DIR, VECTOR_STORE_DIR, MODELS_DIR, LOGS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
