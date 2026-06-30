@@ -160,3 +160,6 @@ frontend/src-tauri/gen/
 frontend/src-tauri/binaries/
 # Keep the icons (committed source assets), ignore nothing else under src-tauri
 
+
+# Demo/transfer build output (144 MB installer + bundled data) — regenerable, never commit
+DEMO_TRANSFER/
