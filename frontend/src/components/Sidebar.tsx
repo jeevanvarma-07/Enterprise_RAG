@@ -1,5 +1,5 @@
 import React from 'react';
-import { Database, UploadCloud, MessageSquare, Activity, GitBranch, Cpu } from 'lucide-react';
+import { Database, UploadCloud, MessageSquare, Activity, GitBranch, Cpu, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (tab: string) => void }) {
@@ -25,6 +25,7 @@ export default function Sidebar({ activeTab, setActiveTab }: { activeTab: string
 
                     <p className="text-[10px] text-slate-600 uppercase tracking-widest px-3 mt-4 mb-2 hidden lg:block font-semibold pt-2 border-t border-white/5">System</p>
                     <NavItem icon={<GitBranch />} label="AI Pipeline" active={activeTab === 'pipeline'} onClick={() => setActiveTab('pipeline')} />
+                    <NavItem icon={<BarChart3 />} label="Evaluation" active={activeTab === 'eval'} onClick={() => setActiveTab('eval')} />
                     <NavItem icon={<Cpu />} label="Architecture" active={activeTab === 'arch'} onClick={() => setActiveTab('arch')} />
                 </nav>
             </div>

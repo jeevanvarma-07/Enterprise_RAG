@@ -8,6 +8,7 @@ import VectorStoreTab from './components/VectorStoreTab';
 import DataSourcesTab from './components/DataSourcesTab';
 import PipelineTab from './components/PipelineTab';
 import ArchitectureTab from './components/ArchitectureTab';
+import EvaluationDashboard from './components/EvaluationDashboard';
 import LandingPage from './components/LandingPage';
 import FirstRunWizard from './components/FirstRunWizard';
 import HelpModal from './components/HelpModal';
@@ -312,6 +313,7 @@ function App() {
             {activeTab === 'vector'     && <VectorStoreTab />}
             {activeTab === 'pipeline'   && <PipelineTab />}
             {activeTab === 'arch'       && <ArchitectureTab />}
+            {activeTab === 'eval'       && <EvaluationDashboard />}
           </div>
         </div>
       </main>
