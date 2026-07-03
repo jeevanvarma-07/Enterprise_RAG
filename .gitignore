@@ -129,6 +129,9 @@ backend/vector_store/
 backend/models/
 backend/rag.db
 backend/settings.json
+# Rotating application logs (services/logging_config.py → DATA_DIR/logs/)
+backend/logs/
+*.log
 # Encrypted in-app API-key store (Fernet) + its key — NEVER commit these.
 keys.enc
 secret.key
