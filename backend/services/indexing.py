@@ -81,7 +81,8 @@ class VectorStoreManager:
         else:
             logger.info("No existing index found. Starting fresh.")
 
-    def add_documents(self, text_chunks: list, source_filename: str = "unknown"):
+    def add_documents(self, text_chunks: list, source_filename: str = "unknown",
+                      content_hash: str | None = None):
         """
         Add chunks to FAISS and record metadata.
 
@@ -89,6 +90,9 @@ class VectorStoreManager:
         (text, meta) pairs where `meta` carries location info (e.g. page/rows).
         Any such meta is merged into the chunk's Document metadata so citations
         can point at where in the source the text came from.
+
+        `content_hash` (optional) is a fingerprint of the extracted text, stored
+        so duplicate uploads can be detected (see `find_duplicate`).
         """
         documents = []
         for chunk in text_chunks:
@@ -105,12 +109,31 @@ class VectorStoreManager:
             self.vector_store.add_documents(documents)
 
         # Update metadata
-        self._metadata[source_filename] = {
+        entry = {
             "chunks": len(text_chunks),
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
+        if content_hash:
+            entry["content_hash"] = content_hash
+        self._metadata[source_filename] = entry
         self._save_metadata()
         self._bm25 = None   # docs changed → rebuild keyword index lazily
+
+    def find_duplicate(self, content_hash: str,
+                       ignore: str | None = None) -> str | None:
+        """
+        Return the filename of an already-indexed document whose content matches
+        `content_hash`, or None if this content is new. `ignore` skips a given
+        filename (so re-indexing the same file isn't reported as its own dup).
+        """
+        if not content_hash:
+            return None
+        for fname, meta in self._metadata.items():
+            if fname == ignore:
+                continue
+            if meta.get("content_hash") == content_hash:
+                return fname
+        return None
 
     def save_index(self):
         if self.vector_store:

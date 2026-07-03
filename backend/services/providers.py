@@ -167,6 +167,56 @@ def _build_llamacpp(model: str, temperature: float, max_tokens: int):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Token-usage extraction  (for telemetry + the Retrieval Inspector)
+# ─────────────────────────────────────────────────────────────────────
+def extract_usage(message: Any) -> Optional[dict]:
+    """
+    Best-effort prompt/completion token counts from a LangChain AI message.
+
+    LangChain surfaces usage in a couple of places depending on the provider:
+      - `message.usage_metadata` → {"input_tokens", "output_tokens", "total_tokens"}
+        (the normalised modern field; most OpenAI-compatible + Groq providers)
+      - `message.response_metadata["token_usage"]` → {"prompt_tokens", ...}
+        (older / provider-specific shape)
+
+    Returns {"prompt", "completion", "total", "estimated": False} when the
+    provider reported real numbers, or None if nothing usable was present (the
+    caller can then fall back to an estimate). Never raises.
+    """
+    try:
+        um = getattr(message, "usage_metadata", None)
+        if isinstance(um, dict) and um:
+            prompt = int(um.get("input_tokens") or 0)
+            completion = int(um.get("output_tokens") or 0)
+            total = int(um.get("total_tokens") or (prompt + completion))
+            if total:
+                return {"prompt": prompt, "completion": completion,
+                        "total": total, "estimated": False}
+
+        rm = getattr(message, "response_metadata", None) or {}
+        tu = rm.get("token_usage") or rm.get("usage") or {}
+        if isinstance(tu, dict) and tu:
+            prompt = int(tu.get("prompt_tokens") or 0)
+            completion = int(tu.get("completion_tokens") or 0)
+            total = int(tu.get("total_tokens") or (prompt + completion))
+            if total:
+                return {"prompt": prompt, "completion": completion,
+                        "total": total, "estimated": False}
+    except Exception:
+        pass
+    return None
+
+
+def estimate_tokens(text: str) -> int:
+    """
+    Rough token estimate (~4 chars/token) for when a provider doesn't report
+    usage — notably many streaming responses. Clearly labelled `estimated: True`
+    downstream so the UI never presents a guess as an exact count.
+    """
+    return max(0, len(text or "") // 4)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Fallback ordering
 # ─────────────────────────────────────────────────────────────────────
 def fallback_candidates(provider: Optional[str], model: str) -> List[tuple]:

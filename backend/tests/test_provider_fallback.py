@@ -186,24 +186,45 @@ def _types(events):
     return [e["type"] for e in events]
 
 
+def _drain(gen):
+    """
+    Run a generator to exhaustion, returning (yielded_events, return_value).
+
+    `_stream_with_fallback` now RETURNS `(answer, usage)` (PEP 380) instead of
+    yielding a terminal `done` event — the `done{metrics}` event moved up to
+    `generate_response_stream`, which owns telemetry. `list(gen)` would discard
+    that return value, so tests drain manually to assert on it.
+    """
+    events = []
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration as stop:
+        return events, stop.value
+
+
 def test_stream_emits_build_notice_then_tokens():
     p = _pipeline()
-    events = list(p._stream_with_fallback(
+    events, ret = _drain(p._stream_with_fallback(
         _FakeLLM(stream_tokens=["x", "y"]), [], fallback=[], build_notice="heads up"
     ))
     assert events[0] == {"type": "notice", "content": "heads up"}
-    assert _types(events)[-1] == "done"
+    # The helper no longer emits `done`; its last event is the final token and it
+    # returns (accumulated answer, provider usage or None).
+    assert _types(events)[-1] == "token"
     tokens = "".join(e["content"] for e in events if e["type"] == "token")
     assert tokens == "xy"
+    assert ret == ("xy", None)   # fake tokens carry no usage metadata
 
 
 def test_stream_no_notice_when_no_fallback():
     p = _pipeline()
-    events = list(p._stream_with_fallback(
+    events, ret = _drain(p._stream_with_fallback(
         _FakeLLM(stream_tokens=["a"]), [], fallback=[], build_notice=""
     ))
     assert "notice" not in _types(events)
-    assert _types(events)[-1] == "done"
+    assert _types(events)[-1] == "token"
+    assert ret == ("a", None)
 
 
 def test_stream_falls_back_before_first_token(monkeypatch):
@@ -211,13 +232,14 @@ def test_stream_falls_back_before_first_token(monkeypatch):
                         lambda prov, model: _FakeLLM(stream_tokens=["ok"]))
     p = _pipeline()
     primary = _FakeLLM(stream_fails_before=True)
-    events = list(p._stream_with_fallback(
+    events, ret = _drain(p._stream_with_fallback(
         primary, [], fallback=[("google", "gemini-2.0-flash")], build_notice=""
     ))
     assert "notice" in _types(events)               # runtime switch announced
     tokens = "".join(e["content"] for e in events if e["type"] == "token")
     assert tokens == "ok"
-    assert _types(events)[-1] == "done"
+    assert _types(events)[-1] == "token"
+    assert ret == ("ok", None)
 
 
 def test_stream_all_fail_emits_error():

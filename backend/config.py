@@ -556,6 +556,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ocr": "auto",                  # auto | on | off  (auto = follow profile; off on Lite)
     "table_engine": "auto",         # auto | pdfplumber | docling | off  (see table_engine())
     "llm_fallback": True,           # auto-retry with another configured provider if the chosen LLM fails
+    # Retrieval Inspector — when on, every chat answer streams an extra
+    # `inspection` event carrying the full pipeline trace (rewritten query,
+    # multi-queries, per-query BM25/FAISS hits, RRF order, reranker output, final
+    # context, tokens, latency). OFF by default: it adds payload + a little work,
+    # and most users just want the answer. Purely a transparency/debugging aid.
+    "retrieval_inspector": False,
     # Prompt-size budget — caps how big each LLM request can get, so a long chat
     # or a big index can't blow past a provider's tokens-per-minute limit (Groq's
     # free tier is only 6,000 TPM). history_turns trims the conversation re-sent
@@ -675,6 +681,17 @@ def fallback_enabled() -> bool:
     s = get_settings()
     pref = str(s.get("llm_fallback", True)).lower()
     return pref not in ("off", "false", "0", "no")
+
+
+def retrieval_inspector_enabled() -> bool:
+    """
+    Whether chat answers should carry the full Retrieval Inspector trace. Off by
+    default (transparency/debugging aid, not needed for normal use). Any explicit
+    truthy value in the `retrieval_inspector` setting turns it on.
+    """
+    s = get_settings()
+    pref = str(s.get("retrieval_inspector", False)).lower()
+    return pref in ("on", "true", "1", "yes")
 
 
 def get_settings() -> dict[str, Any]:

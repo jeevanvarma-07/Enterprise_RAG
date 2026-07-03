@@ -62,8 +62,94 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session
                 ON messages(session_id, id);
+            CREATE TABLE IF NOT EXISTS request_metrics (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at      INTEGER NOT NULL,
+                provider        TEXT,               -- 'Provider · model' that answered
+                prompt_tokens   INTEGER,
+                completion_tokens INTEGER,
+                total_tokens    INTEGER,
+                tokens_estimated INTEGER,           -- 1 if token counts are estimated
+                retrieval_ms    REAL,
+                generation_ms   REAL,
+                total_ms        REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_request_metrics_time
+                ON request_metrics(created_at);
             """
         )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-request telemetry  (tokens + latency, for the Evaluation Dashboard)
+# ─────────────────────────────────────────────────────────────────────
+def record_request_metric(metrics: dict) -> None:
+    """
+    Persist one chat request's telemetry. Best-effort — a telemetry write must
+    never be able to break a chat response, so all errors are swallowed.
+
+    `metrics` shape (from RAGPipeline.generate_response_stream's `done` event):
+      {"provider": str, "tokens": {"prompt","completion","total","estimated"},
+       "retrieval_ms": float, "generation_ms": float, "total_ms": float}
+    """
+    try:
+        tokens = metrics.get("tokens") or {}
+        with _conn() as c:
+            c.execute(
+                "INSERT INTO request_metrics (created_at, provider, prompt_tokens, "
+                "completion_tokens, total_tokens, tokens_estimated, retrieval_ms, "
+                "generation_ms, total_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _now(),
+                    metrics.get("provider"),
+                    tokens.get("prompt"),
+                    tokens.get("completion"),
+                    tokens.get("total"),
+                    1 if tokens.get("estimated") else 0,
+                    metrics.get("retrieval_ms"),
+                    metrics.get("generation_ms"),
+                    metrics.get("total_ms"),
+                ),
+            )
+    except Exception:
+        pass
+
+
+def recent_metrics(limit: int = 50) -> List[dict]:
+    """Most-recent request metrics, newest first (for the dashboard trends)."""
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT created_at, provider, prompt_tokens, completion_tokens, "
+                "total_tokens, tokens_estimated, retrieval_ms, generation_ms, total_ms "
+                "FROM request_metrics ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def metrics_summary() -> dict:
+    """Aggregate telemetry (counts, averages) for the dashboard header cards."""
+    try:
+        with _conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n, AVG(total_tokens) AS avg_tokens, "
+                "AVG(total_ms) AS avg_total_ms, AVG(generation_ms) AS avg_gen_ms, "
+                "AVG(retrieval_ms) AS avg_retrieval_ms FROM request_metrics"
+            ).fetchone()
+        d = dict(row) if row else {}
+        return {
+            "requests": d.get("n") or 0,
+            "avg_tokens": round(d["avg_tokens"], 1) if d.get("avg_tokens") else 0,
+            "avg_total_ms": round(d["avg_total_ms"], 1) if d.get("avg_total_ms") else 0,
+            "avg_generation_ms": round(d["avg_gen_ms"], 1) if d.get("avg_gen_ms") else 0,
+            "avg_retrieval_ms": round(d["avg_retrieval_ms"], 1) if d.get("avg_retrieval_ms") else 0,
+        }
+    except Exception:
+        return {"requests": 0, "avg_tokens": 0, "avg_total_ms": 0,
+                "avg_generation_ms": 0, "avg_retrieval_ms": 0}
 
 
 # ─────────────────────────────────────────────────────────────────────

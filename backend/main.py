@@ -12,7 +12,7 @@ import logging
 import config
 from services import storage
 from services.logging_config import setup_logging
-from services.document_processing import process_document_chunks
+from services.document_processing import process_document_chunks, content_hash
 from services.indexing import VectorStoreManager
 from services.generation import RAGPipeline
 from pydantic import BaseModel
@@ -106,10 +106,18 @@ async def _process_one(file: UploadFile) -> dict:
         with open(file_path, "wb") as buf:
             shutil.copyfileobj(file.file, buf)
         chunks = process_document_chunks(file_path)
-        if chunks:
-            vector_manager.add_documents(chunks, source_filename=safe_name)
-            return {"file": safe_name, "status": "ok", "chunks": len(chunks)}
-        return {"file": safe_name, "status": "empty"}
+        if not chunks:
+            return {"file": safe_name, "status": "empty"}
+        # Fingerprint the extracted content and skip re-indexing a document whose
+        # text is already in the store (e.g. the same file uploaded under a new
+        # name) — keeps the index clean and retrieval free of duplicate chunks.
+        chash = content_hash(chunks)
+        dup = vector_manager.find_duplicate(chash, ignore=safe_name)
+        if dup:
+            return {"file": safe_name, "status": "duplicate",
+                    "detail": f"identical content already indexed as '{dup}'"}
+        vector_manager.add_documents(chunks, source_filename=safe_name, content_hash=chash)
+        return {"file": safe_name, "status": "ok", "chunks": len(chunks)}
     except Exception as e:
         return {"file": safe_name, "status": "error", "detail": str(e)}
 
@@ -129,11 +137,13 @@ async def upload_documents(files: List[UploadFile] = File(...)):
     vector_manager.save_index()
 
     successful = [r for r in results if r["status"] == "ok"]
+    duplicates = [r for r in results if r["status"] == "duplicate"]
     errors = [r for r in results if r["status"] == "error"]
 
     return {
         "message": f"Processed {len(files)} file(s). "
-                   f"{len(successful)} indexed, {len(errors)} failed.",
+                   f"{len(successful)} indexed, {len(duplicates)} duplicate(s) skipped, "
+                   f"{len(errors)} failed.",
         "results": results,
     }
 
@@ -171,7 +181,14 @@ async def chat_stream_endpoint(request: ChatRequest):
 
     Starlette runs this sync generator in a threadpool, so the blocking LLM
     stream never stalls the event loop.
+
+    When the (default-off) Retrieval Inspector setting is on, the stream also
+    carries one `inspection` event with the full pipeline trace. The `done` event
+    always carries per-request `metrics` (tokens + latency), which we persist for
+    the performance dashboard as it arrives.
     """
+    inspect = config.retrieval_inspector_enabled()
+
     def event_gen():
         try:
             for event in rag_pipeline.generate_response_stream(
@@ -179,7 +196,10 @@ async def chat_stream_endpoint(request: ChatRequest):
                 request.model_name,
                 chat_history=request.chat_history,
                 provider=request.provider,
+                inspect=inspect,
             ):
+                if event.get("type") == "done" and event.get("metrics"):
+                    storage.record_request_metric(event["metrics"])
                 yield f"data: {json.dumps(event)}\n\n"
         except ValueError as e:
             yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
@@ -191,6 +211,22 @@ async def chat_stream_endpoint(request: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─────────────────────────────────────────────
+# Metrics  (per-request telemetry for the performance dashboard)
+# ─────────────────────────────────────────────
+
+@app.get("/api/metrics/summary")
+async def metrics_summary_endpoint():
+    """Aggregate token/latency telemetry (counts + averages) for header cards."""
+    return storage.metrics_summary()
+
+
+@app.get("/api/metrics/recent")
+async def metrics_recent_endpoint(limit: int = 50):
+    """Most-recent per-request telemetry rows, newest first, for trend charts."""
+    return {"metrics": storage.recent_metrics(limit=limit)}
 
 
 # ─────────────────────────────────────────────
@@ -506,7 +542,14 @@ async def scrape_url(request: ScrapeRequest):
         label = urlparse(request.url).netloc + urlparse(request.url).path
         label = label[:80]  # keep it short
 
-        vector_manager.add_documents(chunks, source_filename=label)
+        # Skip re-indexing a page whose text is already in the store.
+        chash = content_hash(chunks)
+        dup = vector_manager.find_duplicate(chash, ignore=label)
+        if dup:
+            return {"message": f"Skipped — identical content already indexed as '{dup}'.",
+                    "chunks": 0, "source": label, "duplicate": dup}
+
+        vector_manager.add_documents(chunks, source_filename=label, content_hash=chash)
         vector_manager.save_index()
 
         return {"message": f"Indexed {len(chunks)} chunks from {label}", "chunks": len(chunks), "source": label}

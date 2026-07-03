@@ -1,5 +1,7 @@
+import hashlib
 import logging
 import os
+import re
 from typing import List, Tuple
 
 import PyPDF2
@@ -50,6 +52,30 @@ except Exception:  # pragma: no cover - defensive
 def _ocr_ready() -> bool:
     """True only when OCR is both installed and enabled by the active profile."""
     return TESSERACT_AVAILABLE and config.ocr_enabled()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Content fingerprinting  (duplicate detection)
+# ─────────────────────────────────────────────────────────────────────
+def content_hash(chunks: List) -> str:
+    """
+    Stable SHA-256 fingerprint of a document's extracted *content* (not its
+    filename or bytes), used to detect duplicate uploads.
+
+    Hashing the extracted text — rather than the raw file — means the same
+    document uploaded under a different name, or re-saved by a different tool,
+    still fingerprints identically. Whitespace is normalised so trivial
+    reformatting doesn't defeat the match. `chunks` may be plain strings or
+    (text, meta) pairs (the shape process_document_chunks returns).
+    """
+    parts: List[str] = []
+    for ch in chunks:
+        if isinstance(ch, (tuple, list)) and ch and isinstance(ch[0], str):
+            parts.append(ch[0])
+        elif isinstance(ch, str):
+            parts.append(ch)
+    normalized = re.sub(r"\s+", " ", "\n".join(parts)).strip()
+    return hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def process_document(file_path: str) -> list:

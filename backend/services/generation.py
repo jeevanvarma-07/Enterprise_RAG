@@ -1,6 +1,8 @@
 import logging
 import os
+import random
 import re
+import time
 import pandas as pd
 from typing import Any, List, Optional
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -12,11 +14,27 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 import config
-from services.providers import build_chat_model, fallback_candidates
+from services.providers import (
+    build_chat_model,
+    fallback_candidates,
+    extract_usage,
+    estimate_tokens,
+)
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+def _now_ms() -> float:
+    """Monotonic millisecond clock for stage timings (never negative/jumpy)."""
+    return time.perf_counter() * 1000.0
+
+
+# Transient error reasons that are worth a same-provider retry (a brief backoff
+# may clear them) before falling back to a different provider. Auth/model errors
+# are excluded — retrying those just wastes time.
+_TRANSIENT_REASONS = {"rate limit reached", "request timed out", "network error"}
 
 # Sentinel marking "the stream ended without yielding anything" (distinct from a
 # real empty-string chunk), used by the streaming fallback to tell a clean empty
@@ -89,10 +107,17 @@ class QueryVariations(BaseModel):
 # ─────────────────────────────────────────────────────────
 # Reciprocal Rank Fusion
 # ─────────────────────────────────────────────────────────
-def reciprocal_rank_fusion(results: List[List[Document]], k: int = 60) -> List[Document]:
+def reciprocal_rank_fusion(
+    results: List[List[Document]], k: int = 60, return_scores: bool = False
+):
     """
     Merge multiple ranked retrieval lists into one using RRF scoring.
     Higher score = more consistently top-ranked across all query variations.
+
+    By default returns the merged `List[Document]` (unchanged contract for all
+    existing callers). With `return_scores=True` it returns a list of
+    `(Document, score)` pairs instead — used only by the Retrieval Inspector so
+    it can show *why* each chunk ranked where it did.
     """
     scores: dict[str, float] = {}
     doc_map: dict[str, Document] = {}
@@ -104,6 +129,8 @@ def reciprocal_rank_fusion(results: List[List[Document]], k: int = 60) -> List[D
             doc_map[key] = doc
 
     sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)
+    if return_scores:
+        return [(doc_map[key], scores[key]) for key in sorted_keys]
     return [doc_map[key] for key in sorted_keys]
 
 
@@ -204,10 +231,14 @@ class RAGPipeline:
                 messages.append(AIMessage(content=msg["content"]))
         return messages
 
-    def _multi_query_retrieve(self, llm: Any, query: str) -> List[Document]:
+    def _multi_query_retrieve(self, llm: Any, query: str, trace=None) -> List[Document]:
         """
         Generate 3 rephrasings of the user query, retrieve docs for each
         with MMR (diversity-aware), then merge via RRF.
+
+        `trace` (a services.inspection.RetrievalTrace or None) optionally records
+        each stage for the Retrieval Inspector. When None — the default — this
+        behaves exactly as before with no extra work.
         """
         rp = config.retrieval_params()
         retriever = self.vector_manager.as_retriever(
@@ -247,8 +278,13 @@ class RAGPipeline:
             try:
                 docs = retriever.invoke(q)              # dense (FAISS + MMR)
                 all_results.append(docs)
+                if trace is not None:
+                    trace.add_dense(q, docs)
             except Exception:
                 pass
+
+        if trace is not None:
+            trace.set_multi_queries(unique_queries)
 
         # --- Hybrid search: add BM25 keyword results as a sparse signal ---
         # Catches exact terms (names, IDs, rare words) that dense search misses.
@@ -258,12 +294,20 @@ class RAGPipeline:
             if bm25 is not None:
                 for q in unique_queries:
                     try:
-                        all_results.append(bm25.invoke(q))
+                        hits = bm25.invoke(q)
+                        all_results.append(hits)
+                        if trace is not None:
+                            trace.add_sparse(q, hits)
                     except Exception:
                         pass
 
         # --- Merge every dense + sparse ranking with RRF ---
-        fused = reciprocal_rank_fusion(all_results)
+        if trace is not None:
+            scored = reciprocal_rank_fusion(all_results, return_scores=True)
+            fused = [d for d, _ in scored]
+            trace.set_fused(fused)
+        else:
+            fused = reciprocal_rank_fusion(all_results)
 
         # --- Optional Power-mode reranking ---
         # A cross-encoder re-scores the top fused candidates for sharper
@@ -271,7 +315,10 @@ class RAGPipeline:
         # the plain fusion order if flashrank isn't installed.
         if config.rerank_enabled():
             from services.reranker import rerank
-            return rerank(query, fused[:rp["rerank_candidates"]], top_n=rp["final_k"])
+            reranked = rerank(query, fused[:rp["rerank_candidates"]], top_n=rp["final_k"])
+            if trace is not None:
+                trace.set_reranked(reranked)
+            return reranked
 
         return fused[:rp["final_k"]]   # top fused chunks
 
@@ -303,6 +350,7 @@ class RAGPipeline:
         model_name: str,
         provider: Optional[str],
         chat_history: Optional[list],
+        trace=None,
     ) -> tuple:
         """
         Shared retrieval + prompt assembly used by BOTH the streaming and
@@ -337,6 +385,8 @@ class RAGPipeline:
         # The model actually built (the one a runtime failure would be about), so
         # a fallback notice can name *which* model failed.
         primary_label = self._label(prov, model)
+        if trace is not None:
+            trace.set_provider(primary_label)
 
         # If the chosen provider couldn't be built and we fell back, tell the user.
         notice = ""
@@ -359,9 +409,14 @@ class RAGPipeline:
 
         # 2. History-aware query condensation
         search_query = self._rephrase_query_for_history(llm, query, history_messages)
+        if trace is not None:
+            trace.set_query_rewrite(query, search_query)
 
         # 3. Hybrid (dense + BM25) multi-query retrieval fused with RRF
-        fused_docs = self._multi_query_retrieve(llm, search_query)
+        _t_retr = _now_ms()
+        fused_docs = self._multi_query_retrieve(llm, search_query, trace=trace)
+        if trace is not None:
+            trace.add_timing("retrieval", _now_ms() - _t_retr)
 
         if not fused_docs:
             return (
@@ -401,6 +456,8 @@ class RAGPipeline:
         # 5. Run exact CSV/Excel lookup for numeric IDs (e.g. "emp id 3833")
         #    and PREPEND those rows to the context so the LLM sees them first.
         exact_match_text = _scan_uploads_for_exact_match(query)
+        if trace is not None:
+            trace.set_exact_match(exact_match_text)
         faiss_context = "\n\n---\n\n".join(d.page_content for d in fused_docs)
 
         # Trim the retrieved context to the configured character budget so a
@@ -422,6 +479,9 @@ class RAGPipeline:
                 )
         else:
             context_text = faiss_context[:ctx_budget]
+
+        if trace is not None:
+            trace.set_final_context(context_text, budget)
 
         messages = (
             [SystemMessage(content=SYSTEM_PROMPT.format(context=context_text))]
@@ -449,6 +509,34 @@ class RAGPipeline:
         answer, run_notice = self._invoke_with_fallback(llm, messages, fallback, primary_label)
         return (answer, sources, self._join_notice(notice, run_notice))
 
+    def _retry_transient(self, fn, attempts: int = 2, base_delay: float = 0.4):
+        """
+        Call `fn()`; if it fails with a *transient* error (rate-limit / timeout /
+        network — see _TRANSIENT_REASONS), wait with exponential backoff + jitter
+        and retry the SAME call, up to `attempts` times total, BEFORE the caller
+        moves on to a different provider. Non-transient errors (bad key, unknown
+        model) re-raise immediately — retrying those just wastes the user's time.
+
+        Bounded and jittered so a flaky provider can't stall a request for long.
+        Returns fn()'s result, or re-raises the final exception.
+        """
+        last_err: Optional[Exception] = None
+        for i in range(max(1, attempts)):
+            try:
+                return fn()
+            except Exception as e:
+                last_err = e
+                reason = self._error_reason(str(e))
+                if reason not in _TRANSIENT_REASONS or i == attempts - 1:
+                    raise
+                delay = base_delay * (2 ** i) + random.uniform(0, base_delay)
+                logger.info(
+                    f"Transient LLM error ({reason}); retrying in {delay:.1f}s "
+                    f"(attempt {i + 1}/{attempts})."
+                )
+                time.sleep(delay)
+        raise last_err  # pragma: no cover - loop always returns or raises
+
     def _invoke_with_fallback(
         self, llm: Any, messages: list, fallback: List[tuple], primary_label: str = ""
     ) -> tuple:
@@ -457,9 +545,12 @@ class RAGPipeline:
         try each fallback (provider, model) in turn. Returns (answer, notice).
         The notice names the model that failed (`primary_label`) and a short
         reason. Raises ValueError only when every candidate fails.
+
+        Each attempt first retries transiently (see `_retry_transient`) so a brief
+        rate-limit/timeout blip doesn't needlessly burn a provider.
         """
         try:
-            return llm.invoke(messages).content, ""
+            return self._retry_transient(lambda: llm.invoke(messages)).content, ""
         except Exception as primary_err:
             errors = [str(primary_err)]
             failed = primary_label or "The selected model"
@@ -467,7 +558,7 @@ class RAGPipeline:
             for prov, model in fallback:
                 try:
                     alt = build_chat_model(prov, model)
-                    content = alt.invoke(messages).content
+                    content = self._retry_transient(lambda: alt.invoke(messages)).content
                     return content, (
                         f"{failed} failed ({reason}), so this answer was generated "
                         f"with {self._label(prov, model)} instead."
@@ -485,27 +576,73 @@ class RAGPipeline:
         model_name: str = config.DEFAULT_MODEL,
         chat_history: Optional[list] = None,
         provider: Optional[str] = None,
+        inspect: bool = False,
     ):
         """
         Generator of SSE-friendly event dicts for token streaming:
-          {"type": "sources", "sources": [...]}   (once, before the answer)
-          {"type": "notice", "content": "..."}     (at most once, if a fallback ran)
-          {"type": "token",   "content": "..."}    (many)
-          {"type": "done"}                          (once, at the end)
+          {"type": "sources", "sources": [...]}      (once, before the answer)
+          {"type": "notice", "content": "..."}        (at most once, if a fallback ran)
+          {"type": "token",   "content": "..."}       (many)
+          {"type": "inspection", "data": {...}}        (once, only when inspect=True)
+          {"type": "done", "metrics": {...}}           (once, at the end)
         Retrieval runs first (fast, non-streamed); only the final LLM answer
         streams token-by-token. ValueError from _prepare propagates to the
         endpoint, which emits an {"type":"error"} event.
+
+        `inspect` (driven by the default-off `retrieval_inspector` setting) turns
+        on the Retrieval Inspector: every pipeline stage is recorded into a trace
+        and emitted as one extra `inspection` event. When off, the trace is never
+        created and this behaves exactly as before.
         """
+        trace = None
+        if inspect:
+            from services.inspection import RetrievalTrace
+            trace = RetrievalTrace()
+
+        t0 = _now_ms()
         llm, messages, sources, early_text, fallback, notice, primary_label = self._prepare(
-            query, model_name, provider, chat_history
+            query, model_name, provider, chat_history, trace=trace
         )
         if early_text is not None:
             yield {"type": "token", "content": early_text}
+            if trace is not None:
+                trace.add_timing("total", _now_ms() - t0)
+                yield {"type": "inspection", "data": trace.to_dict()}
             yield {"type": "done"}
             return
 
         yield {"type": "sources", "sources": sources}
-        yield from self._stream_with_fallback(llm, messages, fallback, notice, primary_label)
+
+        gen_start = _now_ms()
+        answer, usage = yield from self._stream_with_fallback(
+            llm, messages, fallback, notice, primary_label
+        )
+        if answer is None:
+            # A terminal `error` event was already emitted — nothing more to send.
+            return
+
+        gen_ms = _now_ms() - gen_start
+        total_ms = _now_ms() - t0
+        # Streaming providers usually don't report token usage; fall back to a
+        # clearly-labelled estimate so the dashboard/inspector still has numbers.
+        if usage is None:
+            prompt_text = "".join(getattr(m, "content", "") or "" for m in messages)
+            p, c = estimate_tokens(prompt_text), estimate_tokens(answer)
+            usage = {"prompt": p, "completion": c, "total": p + c, "estimated": True}
+
+        metrics = {
+            "provider": primary_label,
+            "tokens": usage,
+            "retrieval_ms": round(gen_start - t0, 1),   # prep + retrieval time
+            "generation_ms": round(gen_ms, 1),
+            "total_ms": round(total_ms, 1),
+        }
+        if trace is not None:
+            trace.add_timing("generation", gen_ms)
+            trace.add_timing("total", total_ms)
+            trace.set_tokens(usage)
+            yield {"type": "inspection", "data": trace.to_dict()}
+        yield {"type": "done", "metrics": metrics}
 
     def _stream_with_fallback(
         self, llm: Any, messages: list, fallback: List[tuple], build_notice: str,
@@ -513,18 +650,27 @@ class RAGPipeline:
     ):
         """
         Stream tokens from `llm`; if a provider fails *before its first token*,
-        transparently fall back to the next configured one. A mid-stream failure
+        transparently fall back to the next configured one (each provider first
+        retries transient blips via `_retry_transient`). A mid-stream failure
         (after tokens were already sent) can't be retried without duplicating
         output, so it surfaces as an `error` event. Emits a `notice` event when a
         fallback (build-time or runtime) was used.
+
+        Returns `(answer_text, usage)` on success — the accumulated answer and any
+        provider-reported token usage (or None) — so the caller can record
+        telemetry. Returns `(None, None)` after emitting an `error` event.
         """
         attempts = [(None, llm)] + [(cand, None) for cand in fallback]
         errors: List[str] = []
         for idx, (cand, prebuilt) in enumerate(attempts):
             try:
                 model_obj = prebuilt or build_chat_model(cand[0], cand[1])
-                stream = model_obj.stream(messages)
-                first = next(stream, _STREAM_EMPTY)   # may raise: auth / rate-limit / offline
+
+                def _open_stream():
+                    s = model_obj.stream(messages)
+                    return s, next(s, _STREAM_EMPTY)  # may raise: auth/rate-limit/offline
+
+                stream, first = self._retry_transient(_open_stream)
             except Exception as e:
                 errors.append(str(e))
                 continue
@@ -542,21 +688,26 @@ class RAGPipeline:
             if notice:
                 yield {"type": "notice", "content": notice}
 
+            answer_parts: List[str] = []
+            usage: Optional[dict] = None
             try:
                 if first is not _STREAM_EMPTY:
+                    usage = extract_usage(first) or usage
                     text = getattr(first, "content", "") or ""
                     if text:
+                        answer_parts.append(text)
                         yield {"type": "token", "content": text}
                 for chunk in stream:
+                    usage = extract_usage(chunk) or usage
                     text = getattr(chunk, "content", "") or ""
                     if text:
+                        answer_parts.append(text)
                         yield {"type": "token", "content": text}
             except Exception as e:
                 # Failed after streaming began — can't restart cleanly.
                 yield {"type": "error", "detail": f"The model stopped mid-response: {e}"}
-                return
-            yield {"type": "done"}
-            return
+                return None, None
+            return "".join(answer_parts), usage
 
         # Nothing started successfully.
         yield {
@@ -564,4 +715,5 @@ class RAGPipeline:
             "detail": "The language model request failed and no fallback provider "
                       "succeeded: " + " | ".join(errors),
         }
+        return None, None
 
