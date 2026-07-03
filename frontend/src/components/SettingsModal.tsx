@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Gauge, Layers, Zap, Cpu, CheckCircle2, AlertTriangle, KeyRound, Database, RefreshCw, Loader2, MemoryStick, ScanText, Wand2 } from 'lucide-react';
+import { X, Gauge, Layers, Zap, Cpu, CheckCircle2, AlertTriangle, KeyRound, Database, RefreshCw, Loader2, MemoryStick, ScanText, Wand2, Search } from 'lucide-react';
 import api from '../api';
 
 interface Settings {
@@ -27,6 +27,8 @@ interface Settings {
   // Prompt-size budget (caps each request to stay under a provider's TPM limit).
   history_turns?: number;
   context_chars?: number;
+  // Retrieval Inspector — stream the full pipeline trace with each answer (off by default).
+  retrieval_inspector?: boolean;
 }
 
 // Tunable knobs (ranges mirror the server-side clamps in config.py).
@@ -386,6 +388,34 @@ export default function SettingsModal({ open, onClose, onConfigChange }: { open:
                   </div>
                 )}
               </div>
+            </section>
+
+            {/* Retrieval Inspector (diagnostics) */}
+            <section>
+              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Search className="w-3.5 h-3.5 text-slate-400" /> Retrieval Inspector
+              </h3>
+              <div className="flex gap-2 mb-2">
+                {[{ id: true, label: 'On' }, { id: false, label: 'Off' }].map((opt) => {
+                  const active = Boolean(settings?.retrieval_inspector) === opt.id;
+                  return (
+                    <button
+                      key={opt.label}
+                      onClick={() => patch({ retrieval_inspector: opt.id })}
+                      className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                        active ? 'bg-violet-500/15 border-violet-500/40 text-violet-200' : 'bg-slate-800/40 border-white/5 text-slate-400 hover:bg-slate-800/80'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Streams a full pipeline trace with each answer — rewritten query, multi-queries, BM25/FAISS hits,
+                RRF ranking, reranker output, final context, tokens & latency. <span className="text-slate-400">Off by default</span>;
+                adds a little payload, so enable it only when debugging retrieval.
+              </p>
             </section>
 
             {/* OCR (scanned PDFs / images) */}

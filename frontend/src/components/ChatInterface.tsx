@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize from 'rehype-sanitize';
 import api, { API_BASE_URL } from '../api';
+import RetrievalInspector, { MetricsBar, type InspectionData, type RequestMetrics } from './RetrievalInspector';
 
 interface Source { file: string; chunk: number; preview: string; location?: string; text?: string; }
 interface Message {
@@ -14,6 +15,8 @@ interface Message {
   timestamp: string;
   sources?: Source[];
   notice?: string;   // e.g. "Provider X unavailable; answered with Y" (provider fallback)
+  inspection?: InspectionData;  // full pipeline trace (only when the Inspector is on)
+  metrics?: RequestMetrics;     // per-answer tokens + latency (from the `done` event)
 }
 
 const EXAMPLE_QUERIES = [
@@ -285,7 +288,10 @@ export default function ChatInterface({
           if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
           if (!payload) continue;
-          let evt: { type: string; content?: string; sources?: Source[]; detail?: string };
+          let evt: {
+            type: string; content?: string; sources?: Source[]; detail?: string;
+            data?: InspectionData; metrics?: RequestMetrics;
+          };
           try { evt = JSON.parse(payload); } catch { continue; }
 
           if (evt.type === 'sources') {
@@ -297,6 +303,12 @@ export default function ChatInterface({
           } else if (evt.type === 'token') {
             answer += evt.content || '';
             patchLastMessage({ content: answer });
+          } else if (evt.type === 'inspection') {
+            // Full pipeline trace (only present when the Retrieval Inspector is on).
+            if (evt.data) patchLastMessage({ inspection: evt.data });
+          } else if (evt.type === 'done') {
+            // Final event — carries per-answer telemetry (tokens + latency).
+            if (evt.metrics) patchLastMessage({ metrics: evt.metrics });
           } else if (evt.type === 'error') {
             answer = `**Error:** ${evt.detail || 'Something went wrong.'}`;
             patchLastMessage({ content: answer });
@@ -484,6 +496,12 @@ export default function ChatInterface({
                 {msg.role === 'ai' && msg.sources && msg.sources.length > 0 && (
                   <SourcePanel sources={msg.sources} />
                 )}
+
+                {/* Per-answer telemetry strip (tokens + latency) */}
+                {msg.role === 'ai' && msg.metrics && <MetricsBar metrics={msg.metrics} />}
+
+                {/* Retrieval Inspector — full pipeline trace (opt-in, default off) */}
+                {msg.role === 'ai' && msg.inspection && <RetrievalInspector data={msg.inspection} />}
               </div>
             </motion.div>
           ))}
