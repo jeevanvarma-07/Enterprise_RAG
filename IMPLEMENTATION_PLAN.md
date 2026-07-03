@@ -161,6 +161,21 @@ in-app; offline chat works on the dev machine with no external services.
       on a built-in synthetic corpus, or against the real store with `--use-store --dataset
       eval/<file>.json` (example in `backend/eval/example_questions.json`). Covered by
       `tests/test_eval_harness.py`. Done 2026-06-21.
+- [x] **RAGAS Evaluation Dashboard.** ✅ Answer-quality layer on top of the telemetry
+      foundation: the four canonical RAG metrics — **faithfulness**, **answer relevancy**,
+      **context precision**, **context recall** — hand-rolled (LLM-judge via
+      `providers.build_chat_model` + local embeddings, *not* the heavy pip `ragas`, so it
+      stays Python-3.9 / Lite-safe). `services/evaluation.py` computes each metric
+      defensively (any judge/parse failure → metric `null`, never crashes); `eval_runs`
+      table + `record_eval_run`/`recent_evals`/`eval_summary` persist results;
+      `/api/eval/{run,dataset,summary,recent}` expose live single-question eval (3 label-free
+      metrics) and ground-truth dataset eval (all 4; context-recall needs labels, capped at
+      25 items for free-tier rate limits). Frontend **Evaluation** tab
+      (`EvaluationDashboard.tsx`) renders header/aggregate cards, hand-rolled 0–1 bar gauges
+      (zero chart deps), a run panel, dataset runner, and a recent-evals table. Bundled
+      `eval/ragas_example.json` gives a zero-setup demo. Covered by
+      `tests/test_evaluation.py` (16 tests, stubbed judge + toy embedder, offline). On-demand
+      only — no passive per-chat overhead. Done 2026-07-03.
 
 **Exit criteria:** hybrid + rerank demonstrably improve answers on your test docs; responses
 stream; conversations persist across restarts.
@@ -301,11 +316,12 @@ deferred OCR/llama.cpp native bundling.
 - [~] **Onboarding & docs:** ✅ First-run wizard + an always-available in-app **Help & About**
       panel (getting-started, privacy, modes, version, project link). Done 2026-06-22.
       *Remaining: a standalone user guide / one-page site.*
-- [~] **Tests & CI:** ✅ 60 backend tests (config, doc processing, indexing, generation,
-      embeddings, modes, reranker/storage, keystore, eval harness) isolated via a temp
-      `RAG_DATA_DIR`. `.github/workflows/backend-tests.yml` runs the suite on push/PR to main
-      across Python 3.9 + 3.11. (Done 2026-06-22.) *Remaining: a boot smoke-test of the packaged
-      app in CI.*
+- [~] **Tests & CI:** ✅ 132 backend tests pass / 1 skipped (config, doc processing, indexing,
+      generation, embeddings, modes, reranker/storage, keystore, eval harness, retrieval
+      inspector + telemetry, RAGAS evaluation) isolated via a temp `RAG_DATA_DIR`.
+      `.github/workflows/backend-tests.yml` runs the suite on push/PR to main across
+      Python 3.9 + 3.11. (Done 2026-06-22; RAGAS eval tests added 2026-07-03.) *Remaining: a
+      boot smoke-test of the packaged app in CI.*
 - [ ] **Licensing:** choose a license (consider a source-available or dual license if you want
       to sell it later). Add `LICENSE` and third-party attributions.
 - [ ] **Versioning & auto-update:** semantic versions, release notes; Tauri updater later.

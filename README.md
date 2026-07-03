@@ -29,6 +29,11 @@ Your documents never leave your machine.
 - **Torch-free option** — ONNX embeddings (`fastembed`) for a lean install; switch to the
   PyTorch backend for max accuracy and rebuild the index in one click.
 - **Chat persistence** — sessions + history in SQLite, with a sidebar to revisit them.
+- **Evaluation & telemetry** — an **Evaluation** tab with the four RAGAS-style quality
+  metrics (faithfulness, answer relevancy, context precision, context recall), computed
+  Lite-safe from the configured LLM-judge + local embeddings (no heavy `ragas` dependency).
+  Run a single question live or a labelled dataset, alongside per-request token/latency
+  telemetry and an opt-in **Retrieval Inspector** that traces every pipeline stage.
 - **Vector store management** — view, selectively delete, or export the FAISS index.
 - **Guided onboarding** — a first-run wizard (detect hardware → pick a mode → add a key) plus an
   always-available in-app Help & About panel.

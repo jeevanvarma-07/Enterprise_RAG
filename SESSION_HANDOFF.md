@@ -12,47 +12,64 @@ does (via git).** Update + commit it at the END of every working session.
 
 ---
 
-## Current state (updated 2026-07-03)
+## Current state (updated 2026-07-03 — later session)
+
+**RAGAS Evaluation Dashboard — shipped this session.** The headline remaining feature from
+the project prompt is done: the four canonical RAG-quality metrics, hand-rolled and
+Lite-safe, with a full Evaluation tab. Backend: **132 tests pass (1 skipped)** (was 116).
+Frontend: `tsc -b` clean + `vite build` succeeds.
+
+Done this session (2026-07-03, later) — planned then built end-to-end:
+1. **Eval engine** — NEW `services/evaluation.py`. Hand-rolled metrics reusing the configured
+   LLM-judge (`providers.build_chat_model`, temp 0) + local embeddings — **not** the pip
+   `ragas` package (heavy, wants newer Python; this repo runs 3.9 on Lite). Four metrics,
+   each `{score: float|None, detail}`, never raises (judge/parse failure → `null`):
+   **faithfulness** (claims extracted from answer, verdicted vs contexts),
+   **answer_relevancy** (N=3 reverse-questions embedded, mean cosine to original;
+   noncommittal → 0), **context_precision** (RAGAS rank-weighted precision@k),
+   **context_recall** (ground-truth claims attributable to contexts; `null` w/o labels).
+   `evaluate(...)` orchestrates, filling answer/contexts via the pipeline when absent.
+2. **Storage** — `storage.py`: `eval_runs` table + `record_eval_run` / `recent_evals` /
+   `eval_summary` (COUNT + null-safe AVG of the four), mirroring the `request_metrics` shape.
+3. **API** — `main.py`: `POST /api/eval/run` (live single question, threadpooled),
+   `POST /api/eval/dataset` (sequential, capped at 25 items for free-tier TPM),
+   `GET /api/eval/summary`, `GET /api/eval/recent?limit=`. `eval_provider`/`eval_model`
+   optional settings.
+4. **Frontend** — NEW `components/EvaluationDashboard.tsx` (Evaluation tab, `BarChart3`
+   nav item): header/aggregate cards, hand-rolled 0–1 bar gauges (zero chart deps), run
+   panel (question + optional ground-truth), dataset runner, recent-evals table. Reuses the
+   existing `/api/metrics/summary` for the tokens/latency strip.
+5. **Fixtures + tests** — `eval/ragas_example.json` (6 labelled Q+ground_truth, zero-setup
+   demo); `tests/test_evaluation.py` (16 tests, stubbed judge + toy embedder, fully offline).
+
+On-demand only — zero passive per-chat overhead. Committed per concern (eval engine → storage
+→ API → frontend → tests → docs) on top of the prior session's work.
+
+**Next big item = polish / release (Phase 5):** packaged-app boot smoke-test in CI, the
+remaining MEDIUM audit items (focus traps, error boundary, ARIA), and the deferred offline
+LLM (llama.cpp + GGUF). No headline feature outstanding.
+
+---
+
+## Prior state (updated 2026-07-03 — earlier session)
 
 **Retrieval Inspector + per-request telemetry + reliability + duplicate detection —
-shipped this session.** Backend: **116 tests pass (1 skipped)** (was 101). Frontend:
-`tsc -b` clean + `vite build` succeeds. All committed on top of `2bcc834`; not pushed.
+shipped.** Backend: **116 tests pass (1 skipped)** (was 101). Frontend `tsc -b` clean +
+`vite build` succeeds. All committed on top of `2bcc834`.
 
-Done this session (2026-07-03) — finished the in-flight WIP the prior session left
-uncommitted, then wired + built the UI + tests:
 1. **Retrieval Inspector (backend)** — `services/inspection.py` `RetrievalTrace`: opt-in,
-   zero-overhead-when-off, best-effort (never raises) trace of every pipeline stage
-   (rewritten query, multi-queries, per-query BM25/FAISS hits, RRF order w/ scores,
-   reranker output, exact-match, final context, tokens, latency). Threaded through
-   `generation.py` as an optional `trace=`/`inspect=` arg; streams one extra
-   `inspection` SSE event when on.
-2. **Telemetry** — streaming now returns `(answer, usage)` and emits `done{metrics}`
-   (provider · tokens · retrieval/generation/total ms). `providers.extract_usage` /
-   `estimate_tokens`; `storage.request_metrics` table + `record_request_metric` /
-   `recent_metrics` / `metrics_summary`. Persisted per chat request.
+   zero-overhead-when-off, best-effort trace of every pipeline stage; streams an `inspection`
+   SSE event when on.
+2. **Telemetry** — streaming returns `(answer, usage)` and emits `done{metrics}`;
+   `storage.request_metrics` table + `record_request_metric` / `recent_metrics` /
+   `metrics_summary`.
 3. **Reliability** — `generation._retry_transient`: exp-backoff+jitter retry of the SAME
-   provider for transient errors (rate-limit / timeout / network) BEFORE falling back to
-   another provider. Non-transient errors (bad key / unknown model) re-raise immediately.
-4. **Duplicate detection** — `document_processing.content_hash` (whitespace-normalised,
-   name-independent SHA-256 of extracted text); `indexing.find_duplicate`; upload + URL
-   scrape skip re-indexing identical content and report it.
-5. **API wiring** — `main.py`: stream passes `inspect=config.retrieval_inspector_enabled()`
-   + records metrics; new `GET /api/metrics/summary` + `/api/metrics/recent`; upload/scrape
-   dedup. `config.retrieval_inspector` setting (default off) + `retrieval_inspector_enabled()`.
-6. **Frontend** — `components/RetrievalInspector.tsx` (collapsible per-answer trace) +
-   `MetricsBar` (tokens · latency · provider strip under every AI answer); `ChatInterface.tsx`
-   consumes the `inspection` + `done{metrics}` events; `SettingsModal.tsx` default-off On/Off
-   Retrieval Inspector toggle.
-7. **Tests** — `tests/test_inspection_and_metrics.py` (13 new); fixed the 3 streaming tests
-   to the new `(answer,usage)` contract via a `_drain` helper. `chore`: gitignore runtime logs.
-
-**Note on commit granularity:** the backend landed as one broad commit (`7864051`) rather
-than the intended per-concern split (an early `git add -A backend/` had pre-staged everything);
-its message covers the headline. Frontend is its own commit. Not worth rewriting history.
-
-**Next big item = the RAGAS Evaluation Dashboard** (faithfulness / answer-relevancy /
-context-precision / context-recall). The telemetry foundation (tokens/latency + `/api/metrics/*`)
-now exists; RAGAS itself is a separate, larger phase (needs an eval framework + a metrics UI).
+   provider for transient errors before falling back; non-transient errors re-raise.
+4. **Duplicate detection** — `document_processing.content_hash` + `indexing.find_duplicate`;
+   upload + URL scrape skip re-indexing identical content.
+5. **Frontend** — `RetrievalInspector.tsx` + `MetricsBar`; `SettingsModal` default-off toggle.
+6. **Tests** — `tests/test_inspection_and_metrics.py` (13). Backend landed as one broad
+   commit (`7864051`); frontend its own commit.
 
 ---
 
@@ -98,14 +115,9 @@ MIT LICENSE → footer reword → this docs/handoff update. Verified before comm
 `pytest` 101 passed / 1 skipped, frontend `tsc -b` clean. Not pushed yet.
 
 ## Next steps (in priority order)
-1. **RAGAS Evaluation Dashboard** — the headline remaining feature from the project prompt:
-   faithfulness, answer relevancy, context precision, context recall (+ answer correctness /
-   context utilization if feasible), shown with charts + explanations. Foundation is in place
-   (per-request telemetry + `/api/metrics/summary` + `/api/metrics/recent`). RAGAS needs a free,
-   Lite-safe eval path (it normally wants an LLM judge + embeddings — reuse the configured
-   provider + local embeddings; gate any heavy bits behind Power mode). Build a
-   `/api/eval/*` layer + an Evaluation Dashboard tab that also visualises the existing
-   token/latency metrics. This is a separate, larger phase — plan before coding.
+1. ~~**RAGAS Evaluation Dashboard**~~ — DONE 2026-07-03 (later session). Four hand-rolled
+   Lite-safe metrics + `/api/eval/*` + Evaluation tab; see Current state. No headline feature
+   outstanding.
 2. **⚠️ USER ACTION — rotate the Groq key.** `backend/.env` contains a REAL key
    (`GROQ_API_KEY="gsk_…"`), not a placeholder. Rotate it at console.groq.com, delete the
    line from `.env`, and re-add the new key via Settings → LLM Providers (encrypted store).
