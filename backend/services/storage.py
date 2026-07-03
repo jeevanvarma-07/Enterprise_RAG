@@ -76,6 +76,24 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_request_metrics_time
                 ON request_metrics(created_at);
+            CREATE TABLE IF NOT EXISTS eval_runs (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at          INTEGER NOT NULL,
+                question            TEXT NOT NULL,
+                answer              TEXT,
+                contexts_json       TEXT,               -- JSON list of chunk texts
+                ground_truth        TEXT,               -- labelled answer, nullable
+                faithfulness        REAL,               -- 0..1, NULL if not computed
+                answer_relevancy    REAL,
+                context_precision   REAL,
+                context_recall      REAL,               -- NULL without ground_truth
+                eval_provider       TEXT,               -- LLM judge used
+                eval_model          TEXT,
+                eval_tokens         INTEGER,
+                eval_latency_ms     REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_eval_runs_time
+                ON eval_runs(created_at);
             """
         )
 
@@ -150,6 +168,91 @@ def metrics_summary() -> dict:
     except Exception:
         return {"requests": 0, "avg_tokens": 0, "avg_total_ms": 0,
                 "avg_generation_ms": 0, "avg_retrieval_ms": 0}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# RAGAS evaluation runs  (answer-quality metrics, for the Eval Dashboard)
+# ─────────────────────────────────────────────────────────────────────
+def record_eval_run(result: dict) -> Optional[int]:
+    """
+    Persist one evaluation result. Best-effort — an eval write must never break
+    the request that produced it, so errors are swallowed (returns the new row
+    id, or None on failure).
+
+    `result` shape is what services.evaluation.evaluate() returns:
+      {question, answer, contexts:[...], ground_truth,
+       faithfulness, answer_relevancy, context_precision, context_recall,
+       eval_provider, eval_model, eval_tokens, eval_latency_ms}
+    """
+    try:
+        contexts = result.get("contexts")
+        with _conn() as c:
+            cur = c.execute(
+                "INSERT INTO eval_runs (created_at, question, answer, contexts_json, "
+                "ground_truth, faithfulness, answer_relevancy, context_precision, "
+                "context_recall, eval_provider, eval_model, eval_tokens, eval_latency_ms) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _now(),
+                    result.get("question", ""),
+                    result.get("answer"),
+                    json.dumps(contexts) if contexts is not None else None,
+                    result.get("ground_truth"),
+                    result.get("faithfulness"),
+                    result.get("answer_relevancy"),
+                    result.get("context_precision"),
+                    result.get("context_recall"),
+                    result.get("eval_provider"),
+                    result.get("eval_model"),
+                    result.get("eval_tokens"),
+                    result.get("eval_latency_ms"),
+                ),
+            )
+            return cur.lastrowid
+    except Exception:
+        return None
+
+
+def recent_evals(limit: int = 50) -> List[dict]:
+    """Most-recent evaluation runs, newest first (for the dashboard list)."""
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT id, created_at, question, ground_truth, faithfulness, "
+                "answer_relevancy, context_precision, context_recall, eval_provider, "
+                "eval_model, eval_tokens, eval_latency_ms "
+                "FROM eval_runs ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
+def eval_summary() -> dict:
+    """Aggregate eval metrics (count + per-metric averages) for header cards."""
+    try:
+        with _conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n, AVG(faithfulness) AS f, AVG(answer_relevancy) AS ar, "
+                "AVG(context_precision) AS cp, AVG(context_recall) AS cr "
+                "FROM eval_runs"
+            ).fetchone()
+        d = dict(row) if row else {}
+
+        def _avg(key: str) -> Optional[float]:
+            return round(d[key], 3) if d.get(key) is not None else None
+
+        return {
+            "runs": d.get("n") or 0,
+            "avg_faithfulness": _avg("f"),
+            "avg_answer_relevancy": _avg("ar"),
+            "avg_context_precision": _avg("cp"),
+            "avg_context_recall": _avg("cr"),
+        }
+    except Exception:
+        return {"runs": 0, "avg_faithfulness": None, "avg_answer_relevancy": None,
+                "avg_context_precision": None, "avg_context_recall": None}
 
 
 # ─────────────────────────────────────────────────────────────────────
