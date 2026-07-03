@@ -1,0 +1,11 @@
+{
+  "_comment": "Example labelled dataset for the Evaluation Dashboard (POST /api/eval/dataset). Each item is a question plus its ground_truth answer; ground_truth enables the context_recall metric. The dashboard sends the `items` array. Point these at whatever you have indexed — the ground truths below match the synthetic corpus in scripts/eval_retrieval.py.",
+  "items": [
+    {"question": "Where is the Eiffel Tower located?", "ground_truth": "The Eiffel Tower is located in Paris, France, and was completed in 1889."},
+    {"question": "How do plants convert sunlight into energy?", "ground_truth": "Through photosynthesis, green plants convert sunlight into chemical energy stored as glucose."},
+    {"question": "What is the role of employee 7741?", "ground_truth": "Employee ID 7741 is Priya Nair, a Data Scientist in the Analytics team."},
+    {"question": "How tall is the highest mountain on Earth?", "ground_truth": "Mount Everest is the highest mountain above sea level at 8849 meters, in the Himalayas."},
+    {"question": "What is the refund window for returns?", "ground_truth": "Refunds are allowed within 30 days of purchase if the item is unused and in its original packaging."},
+    {"question": "What was the Q3 revenue?", "ground_truth": "Quarterly revenue for Q3 reached 4.2 million dollars, up 12 percent year over year."}
+  ]
+}

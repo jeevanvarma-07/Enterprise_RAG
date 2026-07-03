@@ -10,7 +10,9 @@ import asyncio
 import logging
 
 import config
+from fastapi.concurrency import run_in_threadpool
 from services import storage
+from services import evaluation
 from services.logging_config import setup_logging
 from services.document_processing import process_document_chunks, content_hash
 from services.indexing import VectorStoreManager
@@ -230,6 +232,107 @@ async def metrics_recent_endpoint(limit: int = 50):
 
 
 # ─────────────────────────────────────────────
+# Evaluation  (RAGAS answer-quality metrics for the Evaluation Dashboard)
+# ─────────────────────────────────────────────
+
+class EvalRunRequest(BaseModel):
+    question: str
+    ground_truth: Optional[str] = None   # labelled answer → enables context_recall
+    # Optional pre-supplied answer/contexts; when omitted the live pipeline runs.
+    answer: Optional[str] = None
+    contexts: Optional[List[str]] = None
+
+
+class EvalDatasetItem(BaseModel):
+    question: str
+    ground_truth: Optional[str] = None
+
+
+class EvalDatasetRequest(BaseModel):
+    items: List[EvalDatasetItem]
+
+
+# Cap a single dataset run so a huge upload can't hammer a free-tier provider's
+# rate limit (e.g. Groq's 6k TPM). Larger sets should be split across runs.
+_MAX_DATASET_ITEMS = 25
+
+
+@app.post("/api/eval/run")
+async def eval_run_endpoint(body: EvalRunRequest):
+    """
+    Evaluate ONE answer. If `answer`/`contexts` are omitted, the live RAG
+    pipeline produces them from `question`. Runs in a threadpool because the
+    LLM-judge calls are blocking. Result is persisted and returned.
+    """
+    try:
+        result = await run_in_threadpool(
+            evaluation.evaluate,
+            body.question,
+            answer=body.answer,
+            contexts=body.contexts,
+            ground_truth=body.ground_truth,
+        )
+        result["id"] = storage.record_eval_run(result)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/eval/dataset")
+async def eval_dataset_endpoint(body: EvalDatasetRequest):
+    """
+    Evaluate a labelled dataset sequentially (concurrency 1, to respect free-tier
+    rate limits) and return per-item results + an aggregate. Each item that
+    carries a ground_truth also gets context_recall.
+    """
+    items = body.items[:_MAX_DATASET_ITEMS]
+    if not items:
+        raise HTTPException(status_code=400, detail="No dataset items provided.")
+
+    def _run_all():
+        rows = []
+        for it in items:
+            r = evaluation.evaluate(it.question, ground_truth=it.ground_truth)
+            r["id"] = storage.record_eval_run(r)
+            rows.append(r)
+        return rows
+
+    try:
+        rows = await run_in_threadpool(_run_all)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Aggregate the non-null scores per metric.
+    def _avg(key: str) -> Optional[float]:
+        vals = [r[key] for r in rows if isinstance(r.get(key), (int, float))]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    aggregate = {
+        "count": len(rows),
+        "truncated": len(body.items) > _MAX_DATASET_ITEMS,
+        "avg_faithfulness": _avg("faithfulness"),
+        "avg_answer_relevancy": _avg("answer_relevancy"),
+        "avg_context_precision": _avg("context_precision"),
+        "avg_context_recall": _avg("context_recall"),
+    }
+    return {"aggregate": aggregate, "results": rows}
+
+
+@app.get("/api/eval/summary")
+async def eval_summary_endpoint():
+    """Aggregate RAGAS metrics (count + per-metric averages) for header cards."""
+    return storage.eval_summary()
+
+
+@app.get("/api/eval/recent")
+async def eval_recent_endpoint(limit: int = 50):
+    """Most-recent evaluation runs, newest first, for the dashboard list."""
+    return {"runs": storage.recent_evals(limit=limit)}
+
+
+# ─────────────────────────────────────────────
 # Models & Settings
 # ─────────────────────────────────────────────
 
@@ -398,6 +501,9 @@ class SettingsUpdate(BaseModel):
     bm25_k: Optional[int] = None
     final_k: Optional[int] = None
     rerank_candidates: Optional[int] = None
+    # Evaluation — which LLM judges answer quality (defaults to the chat provider/model)
+    eval_provider: Optional[str] = None
+    eval_model: Optional[str] = None
 
 
 @app.post("/api/settings")
